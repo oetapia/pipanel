@@ -423,6 +423,24 @@ class Display:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return
+                elif event.type == pygame.KEYDOWN:
+                    k = event.key
+                    if k == pygame.K_ESCAPE:
+                        return
+                    elif k == pygame.K_SPACE:
+                        sio.emit("toggle", "")
+                    elif k == pygame.K_RIGHT:
+                        sio.emit("next", "")
+                    elif k == pygame.K_LEFT:
+                        sio.emit("prev", "")
+                    elif k == pygame.K_UP:
+                        with vol_lock:
+                            vol = min(100, vol_state["volume"] + 5)
+                        sio.emit("volume", vol)
+                    elif k == pygame.K_DOWN:
+                        with vol_lock:
+                            vol = max(0, vol_state["volume"] - 5)
+                        sio.emit("volume", vol)
 
             redraw = False
             if is_dirty(vol_lock, vol_state):

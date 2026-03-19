@@ -41,12 +41,13 @@ class WeatherApp:
         self.city_index = 0
         self.city       = CITIES[0]
 
-        self._lock        = threading.Lock()
-        self._data        = None
-        self._icon        = None
-        self._error       = ""
-        self._loading     = False
-        self._last_update = 0
+        self._lock         = threading.Lock()
+        self._data         = None
+        self._icon         = None
+        self._icon_bytes   = None  # raw bytes, loaded to surface on main thread
+        self._error        = ""
+        self._loading      = False
+        self._last_update  = 0
 
         self._fetch_async()
 
@@ -69,18 +70,18 @@ class WeatherApp:
             icon_url = result["current"]["condition"]["icon"]
             if icon_url.startswith("//"):
                 icon_url = "https:" + icon_url
-            icon_surf = None
+            icon_bytes = None
             try:
                 ir = requests.get(icon_url, timeout=5)
                 ir.raise_for_status()
-                icon_surf = pygame.image.load(io.BytesIO(ir.content))
-                icon_surf = pygame.transform.scale(icon_surf, (96, 96))
+                icon_bytes = ir.content
             except Exception:
                 pass
 
             with self._lock:
                 self._data        = result
-                self._icon        = icon_surf
+                self._icon        = None  # will be built on main thread
+                self._icon_bytes  = icon_bytes
                 self._loading     = False
                 self._last_update = time.time()
         except Exception as e:
@@ -101,10 +102,21 @@ class WeatherApp:
         self.screen.fill(BLACK)
 
         with self._lock:
-            data    = self._data
-            loading = self._loading
-            error   = self._error
-            icon    = self._icon
+            data       = self._data
+            loading    = self._loading
+            error      = self._error
+            icon       = self._icon
+            icon_bytes = self._icon_bytes
+
+        # Build icon surface on main thread (pygame is not thread-safe)
+        if icon_bytes and icon is None:
+            try:
+                surf = pygame.image.load(io.BytesIO(icon_bytes))
+                icon = pygame.transform.scale(surf, (96, 96))
+                with self._lock:
+                    self._icon = icon
+            except Exception:
+                pass
 
         # Header
         self._t("WEATHER", 20, 14, YELLOW, self.fnt_lg)
