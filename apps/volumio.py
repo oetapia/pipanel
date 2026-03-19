@@ -15,6 +15,7 @@ os.environ["SDL_FBDEV"] = "/dev/fb1"
 VOLUMIO_HOST = "http://volumio.local"
 GENIUS_URL   = "http://volumio.local:4000/api/genius"
 LRCLIB_URL   = "http://volumio.local:4000/api/lrclib"
+TIDAL_URL    = "http://volumio.local:4000/api/tidal"
 
 SCREEN_W, SCREEN_H = 480, 320
 
@@ -60,7 +61,7 @@ def make_state(**defaults):
 vol_state, vol_lock = make_state(
     title="Waiting...", artist="", album="",
     bitrate="", status="stop", volume=0,
-    seek=0, connected=False, error=""
+    seek=0, connected=False, error="", uri=""
 )
 gen_state, gen_lock = make_state(
     year="", samples=[], sampled_in=[],
@@ -69,6 +70,10 @@ gen_state, gen_lock = make_state(
 lyr_state, lyr_lock = make_state(
     lines=[], plain="", current_ms=0,
     loading=False, error="", last_key=""
+)
+# "genius" | "similar" | "album"
+tidal_state, tidal_lock = make_state(
+    mode="genius", tracks=[], loading=False, error=""
 )
 
 def update(lock, state, **kwargs):
@@ -213,6 +218,54 @@ def fetch_lyrics(title, artist, album, duration):
         update(lyr_lock, lyr_state, loading=False, error="Lyrics error")
         print(f"Lyrics: {e}")
 
+# ===================================================================
+# Tidal fetch
+# ===================================================================
+def tidal_track_id():
+    """Extract numeric Tidal track ID from Volumio URI (e.g. 'tidal/track/94401408')."""
+    with vol_lock:
+        uri = vol_state.get("uri", "")
+    m = re.search(r'(\d+)$', uri)
+    return m.group(1) if m else None
+
+def _parse_tidal_tracks(json_data):
+    """Extract display strings from a Tidal relationship response."""
+    included = {item["id"]: item for item in json_data.get("included", [])}
+    tracks = []
+    for item in json_data.get("data", []):
+        tid = item.get("id", "")
+        attrs = included.get(tid, {}).get("attributes", {})
+        title = attrs.get("title") or tid
+        artists = attrs.get("artists", [])
+        artist = artists[0].get("name", "") if artists else ""
+        tracks.append(f"{title}" + (f" · {artist}" if artist else ""))
+    return tracks
+
+def fetch_similar_tracks(track_id):
+    update(tidal_lock, tidal_state, loading=True, error="", tracks=[], mode="similar")
+    try:
+        r = requests.get(f"{TIDAL_URL}/similar-tracks", params={"trackId": track_id}, timeout=8)
+        r.raise_for_status()
+        tracks = _parse_tidal_tracks(r.json())
+        update(tidal_lock, tidal_state, loading=False, tracks=tracks,
+               error="" if tracks else "No similar tracks")
+    except Exception as e:
+        update(tidal_lock, tidal_state, loading=False, error="Tidal error")
+        print(f"Tidal similar: {e}")
+
+def fetch_album_tracks(track_id):
+    update(tidal_lock, tidal_state, loading=True, error="", tracks=[], mode="album")
+    try:
+        r = requests.get(f"{TIDAL_URL}/album-tracks", params={"trackId": track_id}, timeout=8)
+        r.raise_for_status()
+        tracks = _parse_tidal_tracks(r.json())
+        update(tidal_lock, tidal_state, loading=False, tracks=tracks,
+               error="" if tracks else "No album tracks")
+    except Exception as e:
+        update(tidal_lock, tidal_state, loading=False, error="Tidal error")
+        print(f"Tidal album: {e}")
+
+
 def maybe_fetch(title, artist, album="", duration=None):
     key = f"{title}|{artist}"
     with gen_lock:
@@ -256,7 +309,7 @@ def on_push_state(data):
            title=title, artist=artist, album=album,
            bitrate=data.get("bitrate", ""),
            status=status, volume=data.get("volume", 0),
-           seek=seek_ms, error="")
+           seek=seek_ms, error="", uri=data.get("uri", ""))
     update(lyr_lock, lyr_state, current_ms=seek_ms)
 
     if title and artist and status == "play":
@@ -373,6 +426,28 @@ class Display:
             self.t("No samples", x, y, GREY, self.fnt_sm)
 
     # ------------------------------------------------------------------
+    def draw_tidal(self, t):
+        x, w = COL2_X + 4, COL2_W - 8
+        y = 4
+
+        label = "SIMILAR" if t["mode"] == "similar" else "ALBUM"
+        self.t(label, x, y, CYAN, self.fnt_md)
+        pygame.draw.line(self.screen, GREY, (x, y + 18), (x + w, y + 18), 1)
+        y += 24
+
+        if t["loading"]:
+            self.t("Loading...", x, y, LGREY, self.fnt_sm)
+            return
+        if t["error"]:
+            self.t(t["error"], x, y, ORANGE, self.fnt_sm, max_w=w)
+            return
+        for track in t["tracks"]:
+            self.t(track, x, y, DIMWHITE, self.fnt_sm, max_w=w)
+            y += 14
+            if y > DIV_BAR - 10:
+                break
+
+    # ------------------------------------------------------------------
     def draw_statusbar(self, v):
         x, w = 4, SCREEN_W - 8
 
@@ -399,7 +474,7 @@ class Display:
             self.t(v["error"] or "Connecting...", x, BAR_Y2, ORANGE, self.fnt_sm)
 
     # ------------------------------------------------------------------
-    def draw(self, v, g, l):
+    def draw(self, v, g, l, t):
         self.screen.fill(BLACK)
 
         # Dividers
@@ -407,7 +482,10 @@ class Display:
         pygame.draw.line(self.screen, GREY, (0, DIV_BAR), (SCREEN_W, DIV_BAR), 1)
 
         self.draw_lyrics(l)
-        self.draw_genius(g)
+        if t["mode"] == "genius":
+            self.draw_genius(g)
+        else:
+            self.draw_tidal(t)
         self.draw_statusbar(v)
 
         pygame.display.flip()
@@ -418,6 +496,7 @@ class Display:
         v_snap = snapshot(vol_lock, vol_state)
         g_snap = snapshot(gen_lock, gen_state)
         l_snap = snapshot(lyr_lock, lyr_state)
+        t_snap = snapshot(tidal_lock, tidal_state)
 
         while True:
             for event in pygame.event.get():
@@ -441,6 +520,26 @@ class Display:
                         with vol_lock:
                             vol = max(0, vol_state["volume"] - 5)
                         sio.emit("volume", vol)
+                    elif k == pygame.K_s:
+                        tid = tidal_track_id()
+                        if tid:
+                            threading.Thread(target=fetch_similar_tracks,
+                                             args=(tid,), daemon=True).start()
+                        else:
+                            update(tidal_lock, tidal_state,
+                                   mode="similar", tracks=[], loading=False,
+                                   error="No Tidal track ID")
+                    elif k == pygame.K_a:
+                        tid = tidal_track_id()
+                        if tid:
+                            threading.Thread(target=fetch_album_tracks,
+                                             args=(tid,), daemon=True).start()
+                        else:
+                            update(tidal_lock, tidal_state,
+                                   mode="album", tracks=[], loading=False,
+                                   error="No Tidal track ID")
+                    elif k == pygame.K_g:
+                        update(tidal_lock, tidal_state, mode="genius")
 
             redraw = False
             if is_dirty(vol_lock, vol_state):
@@ -452,9 +551,12 @@ class Display:
             if is_dirty(lyr_lock, lyr_state):
                 l_snap = snapshot(lyr_lock, lyr_state)
                 redraw = True
+            if is_dirty(tidal_lock, tidal_state):
+                t_snap = snapshot(tidal_lock, tidal_state)
+                redraw = True
 
             if redraw:
-                self.draw(v_snap, g_snap, l_snap)
+                self.draw(v_snap, g_snap, l_snap, t_snap)
 
             clock.tick(30)
 
