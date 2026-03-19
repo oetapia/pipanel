@@ -62,8 +62,8 @@ class WeatherApp:
         self._icon         = None
         self._icon_bytes   = None  # raw bytes, loaded to surface on main thread
         self._error        = ""
-        self._loading      = False
-        self._last_update  = 0
+        self._loading      = True   # set before thread starts to avoid duplicate fetches
+        self._last_update  = time.time()
 
         self._fetch_async()
 

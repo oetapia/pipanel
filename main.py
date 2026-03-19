@@ -22,9 +22,9 @@ HLBG   = (20,  20,  60)
 
 def run():
     selected = 0
+    pygame.init()
 
     while True:
-        pygame.init()
         screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
         pygame.display.set_caption("pipanel")
         pygame.mouse.set_visible(False)
@@ -83,8 +83,6 @@ def run():
                         running = False
             clock.tick(30)
 
-        pygame.quit()
-
         if launch == 0:
             _launch_volumio()
         elif launch == 1:
@@ -96,13 +94,11 @@ def _launch_volumio():
     from apps.volumio import socket_thread, Display
     threading.Thread(target=socket_thread, daemon=True).start()
     Display().run()
-    pygame.quit()
 
 
 def _launch_weather():
     from apps.weather import WeatherApp
     WeatherApp().run()
-    pygame.quit()
 
 
 if __name__ == "__main__":
