@@ -8,6 +8,22 @@ import pygame
 os.environ.setdefault("SDL_VIDEODRIVER", "fbcon")
 os.environ.setdefault("SDL_FBDEV", "/dev/fb1")
 
+# Load .env from project root (one level above this file)
+def _load_env():
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    try:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                os.environ.setdefault(key.strip(), val.strip().strip("'\""))
+    except FileNotFoundError:
+        pass
+
+_load_env()
+
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY", "")
 BASE_URL = "http://api.weatherapi.com/v1/current.json"
 
