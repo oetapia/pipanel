@@ -73,7 +73,8 @@ lyr_state, lyr_lock = make_state(
 )
 # "genius" | "similar" | "album"
 tidal_state, tidal_lock = make_state(
-    mode="genius", tracks=[], loading=False, error=""
+    mode="genius", tracks=[], loading=False, error="",
+    show_lyrics=True, show_right=True
 )
 
 def update(lock, state, **kwargs):
@@ -229,7 +230,7 @@ def tidal_track_id():
     return m.group(1) if m else None
 
 def _parse_tidal_tracks(json_data):
-    """Extract display strings from a Tidal relationship response."""
+    """Extract {id, label} dicts from a Tidal relationship response."""
     included = {item["id"]: item for item in json_data.get("included", [])}
     tracks = []
     for item in json_data.get("data", []):
@@ -238,11 +239,28 @@ def _parse_tidal_tracks(json_data):
         title = attrs.get("title") or tid
         artists = attrs.get("artists", [])
         artist = artists[0].get("name", "") if artists else ""
-        tracks.append(f"{title}" + (f" · {artist}" if artist else ""))
+        label = title + (f" · {artist}" if artist else "")
+        tracks.append({"id": tid, "label": label, "title": title, "artist": artist})
     return tracks
 
+def queue_tidal_tracks(tracks):
+    """Emit addToQueue for each track dict via Volumio socket."""
+    with vol_lock:
+        uri_template = vol_state.get("uri", "")
+    for track in tracks:
+        uri = re.sub(r'\d+$', track["id"], uri_template) if re.search(r'\d+$', uri_template) \
+              else f"tidal://track/{track['id']}"
+        sio.emit("addToQueue", {
+            "uri": uri,
+            "service": "tidal",
+            "title": track["title"],
+            "artist": track["artist"],
+            "type": "song",
+        })
+
+
 def fetch_similar_tracks(track_id):
-    update(tidal_lock, tidal_state, loading=True, error="", tracks=[], mode="similar")
+    update(tidal_lock, tidal_state, loading=True, error="", tracks=[], mode="similar", show_right=True)
     try:
         r = requests.get(f"{TIDAL_URL}/similar-tracks", params={"trackId": track_id}, timeout=8)
         r.raise_for_status()
@@ -254,7 +272,7 @@ def fetch_similar_tracks(track_id):
         print(f"Tidal similar: {e}")
 
 def fetch_album_tracks(track_id):
-    update(tidal_lock, tidal_state, loading=True, error="", tracks=[], mode="album")
+    update(tidal_lock, tidal_state, loading=True, error="", tracks=[], mode="album", show_right=True)
     try:
         r = requests.get(f"{TIDAL_URL}/album-tracks", params={"trackId": track_id}, timeout=8)
         r.raise_for_status()
@@ -442,7 +460,7 @@ class Display:
             self.t(t["error"], x, y, ORANGE, self.fnt_sm, max_w=w)
             return
         for track in t["tracks"]:
-            self.t(track, x, y, DIMWHITE, self.fnt_sm, max_w=w)
+            self.t(track["label"], x, y, DIMWHITE, self.fnt_sm, max_w=w)
             y += 14
             if y > DIV_BAR - 10:
                 break
@@ -477,15 +495,20 @@ class Display:
     def draw(self, v, g, l, t):
         self.screen.fill(BLACK)
 
-        # Dividers
-        pygame.draw.line(self.screen, GREY, (DIV_COL, 0), (DIV_COL, DIV_BAR), 1)
         pygame.draw.line(self.screen, GREY, (0, DIV_BAR), (SCREEN_W, DIV_BAR), 1)
 
-        self.draw_lyrics(l)
-        if t["mode"] == "genius":
-            self.draw_genius(g)
-        else:
-            self.draw_tidal(t)
+        if t["show_lyrics"] and t["show_right"]:
+            pygame.draw.line(self.screen, GREY, (DIV_COL, 0), (DIV_COL, DIV_BAR), 1)
+
+        if t["show_lyrics"]:
+            self.draw_lyrics(l)
+
+        if t["show_right"]:
+            if t["mode"] == "genius":
+                self.draw_genius(g)
+            else:
+                self.draw_tidal(t)
+
         self.draw_statusbar(v)
 
         pygame.display.flip()
@@ -520,6 +543,18 @@ class Display:
                         with vol_lock:
                             vol = max(0, vol_state["volume"] - 5)
                         sio.emit("volume", vol)
+                    elif k == pygame.K_l:
+                        with tidal_lock:
+                            tidal_state["show_lyrics"] = not tidal_state["show_lyrics"]
+                            tidal_state["dirty"] = True
+                    elif k == pygame.K_g:
+                        with tidal_lock:
+                            if tidal_state["show_right"] and tidal_state["mode"] == "genius":
+                                tidal_state["show_right"] = False
+                            else:
+                                tidal_state["show_right"] = True
+                                tidal_state["mode"] = "genius"
+                            tidal_state["dirty"] = True
                     elif k == pygame.K_s:
                         tid = tidal_track_id()
                         if tid:
@@ -527,8 +562,8 @@ class Display:
                                              args=(tid,), daemon=True).start()
                         else:
                             update(tidal_lock, tidal_state,
-                                   mode="similar", tracks=[], loading=False,
-                                   error="No Tidal track ID")
+                                   mode="similar", show_right=True, tracks=[],
+                                   loading=False, error="No Tidal track ID")
                     elif k == pygame.K_a:
                         tid = tidal_track_id()
                         if tid:
@@ -536,10 +571,15 @@ class Display:
                                              args=(tid,), daemon=True).start()
                         else:
                             update(tidal_lock, tidal_state,
-                                   mode="album", tracks=[], loading=False,
-                                   error="No Tidal track ID")
-                    elif k == pygame.K_g:
-                        update(tidal_lock, tidal_state, mode="genius")
+                                   mode="album", show_right=True, tracks=[],
+                                   loading=False, error="No Tidal track ID")
+                    elif k == pygame.K_q:
+                        with tidal_lock:
+                            mode = tidal_state["mode"]
+                            tracks = list(tidal_state["tracks"])
+                        if mode in ("similar", "album") and tracks:
+                            threading.Thread(target=queue_tidal_tracks,
+                                             args=(tracks,), daemon=True).start()
 
             redraw = False
             if is_dirty(vol_lock, vol_state):
