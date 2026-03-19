@@ -61,9 +61,10 @@ class WeatherApp:
             self._loading = True
             self._error   = ""
         try:
+            # Use (connect, read) timeout tuple — plain int doesn't cover DNS hangs
             r = requests.get(BASE_URL,
                              params={"key": WEATHER_API_KEY, "q": city, "aqi": "no"},
-                             timeout=8)
+                             timeout=(5, 8))
             r.raise_for_status()
             result = r.json()
 
@@ -72,7 +73,7 @@ class WeatherApp:
                 icon_url = "https:" + icon_url
             icon_bytes = None
             try:
-                ir = requests.get(icon_url, timeout=5)
+                ir = requests.get(icon_url, timeout=(5, 5))
                 ir.raise_for_status()
                 icon_bytes = ir.content
             except Exception:
