@@ -1,0 +1,15 @@
+[Unit]
+Description=pipanel
+After=graphical.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/pipanel
+ExecStart=/usr/bin/python3 /home/pi/pipanel/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target
