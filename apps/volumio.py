@@ -71,6 +71,9 @@ lyr_state, lyr_lock = make_state(
     lines=[], plain="", current_ms=0,
     loading=False, error="", last_key=""
 )
+queue_state, queue_lock = make_state(
+    items=[], position=0
+)
 # "genius" | "similar" | "album"
 tidal_state, tidal_lock = make_state(
     mode="genius", tracks=[], loading=False, error="",
@@ -308,6 +311,7 @@ sio = socketio.Client(reconnection=True, reconnection_attempts=0)
 def connect():
     update(vol_lock, vol_state, connected=True, error="")
     sio.emit("getState", "")
+    sio.emit("getQueue", "")
 
 @sio.event
 def disconnect():
@@ -328,10 +332,18 @@ def on_push_state(data):
            bitrate=data.get("bitrate", ""),
            status=status, volume=data.get("volume", 0),
            seek=seek_ms, error="", uri=data.get("uri", ""))
+    update(queue_lock, queue_state, position=data.get("position", 0) or 0)
     update(lyr_lock, lyr_state, current_ms=seek_ms)
 
     if title and artist and status == "play":
         maybe_fetch(title, artist, album, duration)
+
+@sio.on("pushQueue")
+def on_push_queue(data):
+    items = data if isinstance(data, list) else []
+    with vol_lock:
+        pos = vol_state.get("position", 0) or 0
+    update(queue_lock, queue_state, items=items, position=pos)
 
 def socket_thread():
     while True:
@@ -466,6 +478,44 @@ class Display:
                 break
 
     # ------------------------------------------------------------------
+    def draw_queue(self, q):
+        x, w = COL1_X + 4, COL1_W - 8
+        y = 4
+        items   = q["items"]
+        pos     = q["position"]
+
+        self.t("QUEUE", x, y, LGREY, self.fnt_md)
+        pygame.draw.line(self.screen, GREY, (x, y + 18), (x + w, y + 18), 1)
+        y += 24
+
+        if not items:
+            self.t("Queue is empty", x, y, GREY, self.fnt_sm)
+            return
+
+        # Centre the current track, same logic as lyrics
+        item_h   = 30
+        visible  = int((DIV_BAR - y) / item_h)
+        centre   = visible // 2
+        start    = max(0, pos - centre)
+
+        for i, item in enumerate(items[start: start + visible]):
+            abs_idx = start + i
+            is_cur  = abs_idx == pos
+            if is_cur:
+                pygame.draw.rect(self.screen, HLBG,
+                                 (COL1_X, y - 2, COL1_W, item_h))
+
+            title  = item.get("title",  "") or ""
+            artist = item.get("artist", "") or ""
+            col_t  = WHITE if is_cur else DIMWHITE
+            col_a  = LGREY if is_cur else GREY
+            self.t(title,  x, y,      col_t, self.fnt_sm, max_w=w)
+            self.t(artist, x, y + 14, col_a, self.fnt_sm, max_w=w)
+            y += item_h
+            if y > DIV_BAR - 4:
+                break
+
+    # ------------------------------------------------------------------
     def draw_statusbar(self, v):
         x, w = 4, SCREEN_W - 8
 
@@ -492,16 +542,19 @@ class Display:
             self.t(v["error"] or "Connecting...", x, BAR_Y2, ORANGE, self.fnt_sm)
 
     # ------------------------------------------------------------------
-    def draw(self, v, g, l, t):
+    def draw(self, v, g, l, t, q):
         self.screen.fill(BLACK)
 
         pygame.draw.line(self.screen, GREY, (0, DIV_BAR), (SCREEN_W, DIV_BAR), 1)
 
-        if t["show_lyrics"] and t["show_right"]:
+        show_left = t["show_lyrics"]
+        if show_left and t["show_right"]:
             pygame.draw.line(self.screen, GREY, (DIV_COL, 0), (DIV_COL, DIV_BAR), 1)
 
-        if t["show_lyrics"]:
+        if show_left:
             self.draw_lyrics(l)
+        else:
+            self.draw_queue(q)
 
         if t["show_right"]:
             if t["mode"] == "genius":
@@ -520,6 +573,7 @@ class Display:
         g_snap = snapshot(gen_lock, gen_state)
         l_snap = snapshot(lyr_lock, lyr_state)
         t_snap = snapshot(tidal_lock, tidal_state)
+        q_snap = snapshot(queue_lock, queue_state)
 
         while True:
             for event in pygame.event.get():
@@ -594,9 +648,12 @@ class Display:
             if is_dirty(tidal_lock, tidal_state):
                 t_snap = snapshot(tidal_lock, tidal_state)
                 redraw = True
+            if is_dirty(queue_lock, queue_state):
+                q_snap = snapshot(queue_lock, queue_state)
+                redraw = True
 
             if redraw:
-                self.draw(v_snap, g_snap, l_snap, t_snap)
+                self.draw(v_snap, g_snap, l_snap, t_snap, q_snap)
 
             clock.tick(30)
 
