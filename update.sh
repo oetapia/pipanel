@@ -6,6 +6,7 @@ REPO_DIR="/home/pi/pipanel"
 echo "Updating pipanel from git..."
 cd "$REPO_DIR"
 
+git config --global --add safe.directory "$REPO_DIR"
 git fetch origin
 git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
 
