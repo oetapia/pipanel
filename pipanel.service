@@ -1,12 +1,11 @@
 [Unit]
 Description=pipanel
-After=network-online.target
-Wants=network-online.target
+After=pipanel-update.service
+Wants=pipanel-update.service
 
 [Service]
 User=root
 WorkingDirectory=/home/pi/pipanel
-ExecStartPre=/bin/bash /home/pi/pipanel/update.sh
 ExecStart=/usr/bin/python3 /home/pi/pipanel/main.py
 Restart=on-failure
 RestartSec=5

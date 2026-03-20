@@ -1,8 +1,6 @@
 #!/bin/bash
 set -e
 
-SERVICE_NAME="pipanel"
-SERVICE_FILE="pipanel.service"
 INSTALL_DIR="/etc/systemd/system"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -11,21 +9,22 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-echo "Copying $SERVICE_FILE to $INSTALL_DIR..."
-cp "$SCRIPT_DIR/$SERVICE_FILE" "$INSTALL_DIR/$SERVICE_FILE"
-
-echo "Setting permissions on service file..."
-chmod 644 "$INSTALL_DIR/$SERVICE_FILE"
-chown root:root "$INSTALL_DIR/$SERVICE_FILE"
+for SERVICE_FILE in pipanel-update.service pipanel.service; do
+  echo "Copying $SERVICE_FILE to $INSTALL_DIR..."
+  cp "$SCRIPT_DIR/$SERVICE_FILE" "$INSTALL_DIR/$SERVICE_FILE"
+  chmod 644 "$INSTALL_DIR/$SERVICE_FILE"
+  chown root:root "$INSTALL_DIR/$SERVICE_FILE"
+done
 
 echo "Reloading systemd daemon..."
 systemctl daemon-reload
 
-echo "Enabling $SERVICE_NAME to start on boot..."
-systemctl enable "$SERVICE_NAME"
+echo "Enabling services..."
+systemctl enable pipanel-update.service
+systemctl enable pipanel.service
 
-echo "Restarting $SERVICE_NAME..."
-systemctl restart "$SERVICE_NAME"
+echo "Restarting pipanel..."
+systemctl restart pipanel.service
 
 echo "Status:"
-systemctl status "$SERVICE_NAME" --no-pager
+systemctl status pipanel.service --no-pager
