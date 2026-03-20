@@ -253,7 +253,7 @@ def queue_tidal_tracks(tracks):
     for track in tracks:
         uri = re.sub(r'\d+$', track["id"], uri_template) if re.search(r'\d+$', uri_template) \
               else f"tidal://track/{track['id']}"
-        sio.emit("addToQueue", {
+        safe_emit("addToQueue", {
             "uri": uri,
             "service": "tidal",
             "title": track["title"],
@@ -316,6 +316,15 @@ def connect():
 @sio.event
 def disconnect():
     update(vol_lock, vol_state, connected=False, error="Disconnected")
+
+def safe_emit(event, data=""):
+    with vol_lock:
+        connected = vol_state.get("connected", False)
+    if connected:
+        try:
+            sio.emit(event, data)
+        except Exception:
+            pass
 
 @sio.on("pushState")
 def on_push_state(data):
@@ -584,19 +593,19 @@ class Display:
                     if k == pygame.K_ESCAPE:
                         return
                     elif k == pygame.K_SPACE:
-                        sio.emit("toggle", "")
+                        safe_emit("toggle")
                     elif k == pygame.K_RIGHT:
-                        sio.emit("next", "")
+                        safe_emit("next")
                     elif k == pygame.K_LEFT:
-                        sio.emit("prev", "")
+                        safe_emit("prev")
                     elif k == pygame.K_UP:
                         with vol_lock:
                             vol = min(100, vol_state["volume"] + 5)
-                        sio.emit("volume", vol)
+                        safe_emit("volume", vol)
                     elif k == pygame.K_DOWN:
                         with vol_lock:
                             vol = max(0, vol_state["volume"] - 5)
-                        sio.emit("volume", vol)
+                        safe_emit("volume", vol)
                     elif k == pygame.K_l:
                         with tidal_lock:
                             tidal_state["show_lyrics"] = not tidal_state["show_lyrics"]
