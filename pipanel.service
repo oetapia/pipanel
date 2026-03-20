@@ -12,6 +12,11 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+TTYPath=/dev/tty1
+StandardInput=tty
+Environment=SDL_VIDEODRIVER=fbcon
+Environment=SDL_FBDEV=/dev/fb1
+Environment=SDL_NOMOUSE=1
 
 [Install]
 WantedBy=multi-user.target
