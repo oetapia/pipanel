@@ -41,7 +41,7 @@
 
   "1080TV": {
     "screen": { "w": 1920, "h": 1080 },
-    "sdl": { "videodriver": "x11", "fbdev": null },
+    "sdl": { "videodriver": "kmsdrm", "fbdev": null },
     "main": {
       "fonts": { "title": 120, "name": 90, "desc": 66, "hint": 60 },
       "title_x": 80,  "title_y": 54,
