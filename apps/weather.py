@@ -1,12 +1,24 @@
 import io
+import json
 import os
 import time
 import threading
 import requests
 import pygame
 
-os.environ.setdefault("SDL_VIDEODRIVER", "fbcon")
-os.environ.setdefault("SDL_FBDEV", "/dev/fb1")
+def _load_profile():
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(_root, "profiles.json")) as f:
+        profiles = json.load(f)
+    return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
+
+_P  = _load_profile()
+_W  = _P["weather"]
+_sdl = _P["sdl"]
+
+os.environ.setdefault("SDL_VIDEODRIVER", _sdl["videodriver"])
+if _sdl.get("fbdev"):
+    os.environ.setdefault("SDL_FBDEV", _sdl["fbdev"])
 
 # Load .env from project root (one level above this file)
 def _load_env():
@@ -27,7 +39,7 @@ _load_env()
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY", "")
 BASE_URL = "http://api.weatherapi.com/v1/current.json"
 
-SCREEN_W, SCREEN_H = 480, 320
+SCREEN_W, SCREEN_H = _P["screen"]["w"], _P["screen"]["h"]
 CITIES = ["Berlin", "Quito", "Seoul", "Madrid", "Raleigh", "NYC", "Bali"]
 UPDATE_INTERVAL = 300  # seconds
 
@@ -48,10 +60,10 @@ class WeatherApp:
         pygame.display.set_caption("Weather")
         pygame.mouse.set_visible(False)
 
-        self.fnt_xl = pygame.font.SysFont(None, 56)
-        self.fnt_lg = pygame.font.SysFont(None, 36)
-        self.fnt_md = pygame.font.SysFont(None, 26)
-        self.fnt_sm = pygame.font.SysFont(None, 20)
+        self.fnt_xl = pygame.font.SysFont(None, _W["fonts"]["xl"])
+        self.fnt_lg = pygame.font.SysFont(None, _W["fonts"]["lg"])
+        self.fnt_md = pygame.font.SysFont(None, _W["fonts"]["md"])
+        self.fnt_sm = pygame.font.SysFont(None, _W["fonts"]["sm"])
 
         self.cities     = CITIES
         self.city_index = 0
@@ -129,50 +141,50 @@ class WeatherApp:
         if icon_bytes and icon is None:
             try:
                 surf = pygame.image.load(io.BytesIO(icon_bytes))
-                icon = pygame.transform.scale(surf, (96, 96))
+                icon = pygame.transform.scale(surf, (_W["icon_size"], _W["icon_size"]))
                 with self._lock:
                     self._icon = icon
             except Exception:
                 pass
 
         # Header
-        self._t("WEATHER", 20, 14, YELLOW, self.fnt_lg)
-        self._t(self.city.upper(), 170, 14, WHITE, self.fnt_lg)
-        pygame.draw.line(self.screen, YELLOW, (0, 46), (SCREEN_W, 46), 1)
+        self._t("WEATHER", _W["header_x"], _W["header_y"], YELLOW, self.fnt_lg)
+        self._t(self.city.upper(), _W["city_x"], _W["city_y"], WHITE, self.fnt_lg)
+        pygame.draw.line(self.screen, YELLOW, (0, _W["header_line_y"]), (SCREEN_W, _W["header_line_y"]), 1)
 
         if loading and not data:
-            self._t("Loading...", 20, 100, LGREY)
+            self._t("Loading...", _W["header_x"], _W["temp_y"], LGREY)
         elif error and not data:
-            self._t(error, 20, 100, RED, self.fnt_sm, max_w=SCREEN_W - 40)
+            self._t(error, _W["header_x"], _W["temp_y"], RED, self.fnt_sm, max_w=SCREEN_W - _W["header_x"] * 2)
         elif data:
             cur = data["current"]
             loc = data["location"]
 
             # Big temperature
-            self._t(f"{cur['temp_c']}°C", 20, 58, GREEN, self.fnt_xl)
+            self._t(f"{cur['temp_c']}°C", _W["temp_x"], _W["temp_y"], GREEN, self.fnt_xl)
 
             # Condition
-            self._t(cur["condition"]["text"], 20, 126, CYAN, self.fnt_md, max_w=290)
+            self._t(cur["condition"]["text"], _W["condition_x"], _W["condition_y"], CYAN, self.fnt_md, max_w=_W["condition_max_w"])
 
             # Details
-            y = 165
+            y = _W["details_y"]
             for label, val in [
                 ("Feels like", f"{cur['feelslike_c']}°C"),
                 ("Wind",       f"{cur['wind_kph']} km/h"),
                 ("Humidity",   f"{cur['humidity']}%"),
                 ("Local time", loc["localtime"].split()[-1]),
             ]:
-                self._t(label, 20,  y, LGREY, self.fnt_sm)
-                self._t(val,   170, y, WHITE, self.fnt_sm)
-                y += 26
+                self._t(label, _W["details_label_x"], y, LGREY, self.fnt_sm)
+                self._t(val,   _W["details_val_x"],   y, WHITE, self.fnt_sm)
+                y += _W["detail_step"]
 
             # Icon (right side)
             if icon:
-                self.screen.blit(icon, (SCREEN_W - 116, 52))
+                self.screen.blit(icon, (SCREEN_W - _W["icon_x_from_right"], _W["icon_y"]))
 
         # Footer
-        pygame.draw.line(self.screen, GREY, (0, SCREEN_H - 30), (SCREEN_W, SCREEN_H - 30), 1)
-        self._t("↑↓ City   R Refresh   ESC Back", 20, SCREEN_H - 20, CYAN, self.fnt_sm)
+        pygame.draw.line(self.screen, GREY, (0, SCREEN_H - _W["footer_line_offset"]), (SCREEN_W, SCREEN_H - _W["footer_line_offset"]), 1)
+        self._t("↑↓ City   R Refresh   ESC Back", _W["header_x"], SCREEN_H - _W["footer_text_offset"], CYAN, self.fnt_sm)
 
         pygame.display.flip()
 

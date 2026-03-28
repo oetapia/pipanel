@@ -26,5 +26,23 @@ systemctl enable pipanel.service
 echo "Restarting pipanel..."
 systemctl restart pipanel.service
 
+echo "Configuring HDMI for 1080p..."
+CONFIG="/boot/firmware/config.txt"
+MARKER="# pipanel HDMI 1080p config"
+
+if grep -q "$MARKER" "$CONFIG"; then
+  echo "HDMI 1080p config already present in $CONFIG, skipping."
+else
+  cat >> "$CONFIG" <<EOF
+
+$MARKER
+hdmi_group=1
+hdmi_mode=16
+hdmi_drive=2
+hdmi_force_hotplug=1
+EOF
+  echo "HDMI 1080p config added to $CONFIG."
+fi
+
 echo "Status:"
 systemctl status pipanel.service --no-pager

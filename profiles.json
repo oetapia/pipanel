@@ -1,0 +1,81 @@
+{
+  "35panel": {
+    "screen": { "w": 480, "h": 320 },
+    "sdl": { "videodriver": "fbcon", "fbdev": "/dev/fb1" },
+    "main": {
+      "fonts": { "title": 40, "name": 30, "desc": 22, "hint": 20 },
+      "title_x": 20, "title_y": 16,
+      "divider_y": 50,
+      "apps_y": 80, "app_item_h": 70,
+      "highlight_h": 46, "highlight_x_pad": 10, "highlight_w_pad": 20,
+      "hint_line_offset": 32,
+      "hint_text_offset": 22,
+      "desc_x_indent": 44,
+      "desc_y_offset": 22
+    },
+    "volumio": {
+      "fonts": { "lg": 26, "md": 22, "sm": 18, "lyr": 20 },
+      "col1_x": 0,   "col1_w": 340,
+      "col2_x": 344, "col2_w": 136,
+      "div_col": 342,
+      "div_bar": 284,
+      "bar_y1_offset": 4,
+      "bar_y2_offset": 20,
+      "lyric_top": 4,
+      "lyric_line_h": 22,
+      "queue_item_h": 30
+    },
+    "weather": {
+      "fonts": { "xl": 56, "lg": 36, "md": 26, "sm": 20 },
+      "header_x": 20,   "header_y": 14,
+      "city_x": 170,    "city_y": 14,
+      "header_line_y": 46,
+      "temp_x": 20,     "temp_y": 58,
+      "condition_x": 20, "condition_y": 126, "condition_max_w": 290,
+      "details_y": 165, "details_label_x": 20, "details_val_x": 170, "detail_step": 26,
+      "icon_x_from_right": 116, "icon_y": 52, "icon_size": 96,
+      "footer_line_offset": 30,
+      "footer_text_offset": 20
+    }
+  },
+
+  "1080TV": {
+    "screen": { "w": 1920, "h": 1080 },
+    "sdl": { "videodriver": "x11", "fbdev": null },
+    "main": {
+      "fonts": { "title": 120, "name": 90, "desc": 66, "hint": 60 },
+      "title_x": 80,  "title_y": 54,
+      "divider_y": 170,
+      "apps_y": 270,  "app_item_h": 235,
+      "highlight_h": 155, "highlight_x_pad": 40, "highlight_w_pad": 80,
+      "hint_line_offset": 108,
+      "hint_text_offset": 74,
+      "desc_x_indent": 176,
+      "desc_y_offset": 74
+    },
+    "volumio": {
+      "fonts": { "lg": 78, "md": 66, "sm": 54, "lyr": 60 },
+      "col1_x": 0,    "col1_w": 1360,
+      "col2_x": 1376, "col2_w": 544,
+      "div_col": 1368,
+      "div_bar": 960,
+      "bar_y1_offset": 14,
+      "bar_y2_offset": 68,
+      "lyric_top": 14,
+      "lyric_line_h": 74,
+      "queue_item_h": 100
+    },
+    "weather": {
+      "fonts": { "xl": 168, "lg": 108, "md": 78, "sm": 60 },
+      "header_x": 80,  "header_y": 47,
+      "city_x": 680,   "city_y": 47,
+      "header_line_y": 155,
+      "temp_x": 80,    "temp_y": 196,
+      "condition_x": 80, "condition_y": 425, "condition_max_w": 980,
+      "details_y": 557, "details_label_x": 80, "details_val_x": 680, "detail_step": 88,
+      "icon_x_from_right": 465, "icon_y": 175, "icon_size": 324,
+      "footer_line_offset": 100,
+      "footer_text_offset": 68
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import sys
@@ -7,9 +8,21 @@ import socketio
 import requests
 import pygame
 
+# --- Profile ---
+def _load_profile():
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(_root, "profiles.json")) as f:
+        profiles = json.load(f)
+    return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
+
+_P  = _load_profile()
+_V  = _P["volumio"]
+_sdl = _P["sdl"]
+
 # --- Display setup ---
-os.environ["SDL_VIDEODRIVER"] = "fbcon"
-os.environ["SDL_FBDEV"] = "/dev/fb1"
+os.environ.setdefault("SDL_VIDEODRIVER", _sdl["videodriver"])
+if _sdl.get("fbdev"):
+    os.environ.setdefault("SDL_FBDEV", _sdl["fbdev"])
 
 # --- Config ---
 VOLUMIO_HOST = "http://volumio.local"
@@ -17,23 +30,23 @@ GENIUS_URL   = "http://volumio.local:4000/api/genius"
 LRCLIB_URL   = "http://volumio.local:4000/api/lrclib"
 TIDAL_URL    = "http://volumio.local:4000/api/tidal"
 
-SCREEN_W, SCREEN_H = 480, 320
+SCREEN_W, SCREEN_H = _P["screen"]["w"], _P["screen"]["h"]
 
 # Column layout
-COL1_X, COL1_W = 0,   340   # Lyrics
-COL2_X, COL2_W = 344, 136   # Genius
-DIV_COL  = 342               # Vertical divider
-DIV_BAR  = 284               # Horizontal divider above status bar
+COL1_X, COL1_W = _V["col1_x"], _V["col1_w"]   # Lyrics
+COL2_X, COL2_W = _V["col2_x"], _V["col2_w"]   # Genius
+DIV_COL  = _V["div_col"]                        # Vertical divider
+DIV_BAR  = _V["div_bar"]                        # Horizontal divider above status bar
 
 # Status bar
-BAR_H    = SCREEN_H - DIV_BAR - 1   # ~35px
-BAR_Y1   = DIV_BAR + 4
-BAR_Y2   = DIV_BAR + 20
+BAR_H    = SCREEN_H - DIV_BAR - 1
+BAR_Y1   = DIV_BAR + _V["bar_y1_offset"]
+BAR_Y2   = DIV_BAR + _V["bar_y2_offset"]
 
 # Lyrics
-LYRIC_TOP    = 4
-LYRIC_LINE_H = 22
-LYRIC_VISIBLE = int((DIV_BAR - LYRIC_TOP) / LYRIC_LINE_H)   # ~12 lines
+LYRIC_TOP    = _V["lyric_top"]
+LYRIC_LINE_H = _V["lyric_line_h"]
+LYRIC_VISIBLE = int((DIV_BAR - LYRIC_TOP) / LYRIC_LINE_H)
 LYRIC_CENTRE  = LYRIC_VISIBLE // 2
 
 # --- Colours ---
@@ -373,10 +386,10 @@ class Display:
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
         pygame.mouse.set_visible(False)
-        self.fnt_lg  = pygame.font.SysFont(None, 26)
-        self.fnt_md  = pygame.font.SysFont(None, 22)
-        self.fnt_sm  = pygame.font.SysFont(None, 18)
-        self.fnt_lyr = pygame.font.SysFont(None, 20)
+        self.fnt_lg  = pygame.font.SysFont(None, _V["fonts"]["lg"])
+        self.fnt_md  = pygame.font.SysFont(None, _V["fonts"]["md"])
+        self.fnt_sm  = pygame.font.SysFont(None, _V["fonts"]["sm"])
+        self.fnt_lyr = pygame.font.SysFont(None, _V["fonts"]["lyr"])
 
     def t(self, txt, x, y, col, fnt=None, max_w=None):
         fnt = fnt or self.fnt_md
@@ -502,7 +515,7 @@ class Display:
             return
 
         # Centre the current track, same logic as lyrics
-        item_h   = 30
+        item_h   = _V["queue_item_h"]
         visible  = int((DIV_BAR - y) / item_h)
         centre   = visible // 2
         start    = max(0, pos - centre)

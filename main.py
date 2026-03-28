@@ -1,11 +1,23 @@
+import json
 import os
 import sys
 import pygame
 
-os.environ.setdefault("SDL_VIDEODRIVER", "fbcon")
-os.environ.setdefault("SDL_FBDEV", "/dev/fb1")
+def _load_profile():
+    _root = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(_root, "profiles.json")) as f:
+        profiles = json.load(f)
+    return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
 
-SCREEN_W, SCREEN_H = 480, 320
+_P  = _load_profile()
+_M  = _P["main"]
+_sdl = _P["sdl"]
+
+os.environ.setdefault("SDL_VIDEODRIVER", _sdl["videodriver"])
+if _sdl.get("fbdev"):
+    os.environ.setdefault("SDL_FBDEV", _sdl["fbdev"])
+
+SCREEN_W, SCREEN_H = _P["screen"]["w"], _P["screen"]["h"]
 
 APPS = [
     {"name": "MUSIC PLAYER", "description": "Volumio controls"},
@@ -29,32 +41,32 @@ def run():
         pygame.display.set_caption("pipanel")
         pygame.mouse.set_visible(False)
 
-        fnt_title = pygame.font.SysFont(None, 40)
-        fnt_name  = pygame.font.SysFont(None, 30)
-        fnt_desc  = pygame.font.SysFont(None, 22)
-        fnt_hint  = pygame.font.SysFont(None, 20)
+        fnt_title = pygame.font.SysFont(None, _M["fonts"]["title"])
+        fnt_name  = pygame.font.SysFont(None, _M["fonts"]["name"])
+        fnt_desc  = pygame.font.SysFont(None, _M["fonts"]["desc"])
+        fnt_hint  = pygame.font.SysFont(None, _M["fonts"]["hint"])
 
         def draw():
             screen.fill(BLACK)
-            screen.blit(fnt_title.render("Apps", True, YELLOW), (20, 16))
-            pygame.draw.line(screen, YELLOW, (20, 50), (SCREEN_W - 20, 50), 1)
+            screen.blit(fnt_title.render("Apps", True, YELLOW), (_M["title_x"], _M["title_y"]))
+            pygame.draw.line(screen, YELLOW, (_M["title_x"], _M["divider_y"]), (SCREEN_W - _M["title_x"], _M["divider_y"]), 1)
 
-            y = 80
+            y = _M["apps_y"]
             for i, app in enumerate(APPS):
                 if i == selected:
-                    pygame.draw.rect(screen, HLBG, (10, y - 6, SCREEN_W - 20, 46))
+                    pygame.draw.rect(screen, HLBG, (_M["highlight_x_pad"], y - 6, SCREEN_W - _M["highlight_w_pad"], _M["highlight_h"]))
                     name_col = WHITE
                     prefix   = ">"
                 else:
                     name_col = GREY
                     prefix   = " "
-                screen.blit(fnt_name.render(f"{prefix} {app['name']}", True, name_col), (20, y))
-                screen.blit(fnt_desc.render(app["description"], True, CYAN), (44, y + 22))
-                y += 70
+                screen.blit(fnt_name.render(f"{prefix} {app['name']}", True, name_col), (_M["title_x"], y))
+                screen.blit(fnt_desc.render(app["description"], True, CYAN), (_M["desc_x_indent"], y + _M["desc_y_offset"]))
+                y += _M["app_item_h"]
 
-            pygame.draw.line(screen, GREY, (0, SCREEN_H - 32), (SCREEN_W, SCREEN_H - 32), 1)
+            pygame.draw.line(screen, GREY, (0, SCREEN_H - _M["hint_line_offset"]), (SCREEN_W, SCREEN_H - _M["hint_line_offset"]), 1)
             screen.blit(fnt_hint.render("↑↓ Select   Enter Launch   ESC Quit", True, CYAN),
-                        (20, SCREEN_H - 22))
+                        (_M["title_x"], SCREEN_H - _M["hint_text_offset"]))
             pygame.display.flip()
 
         draw()
