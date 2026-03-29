@@ -6,14 +6,11 @@ Wants=pipanel-update.service
 [Service]
 User=root
 WorkingDirectory=/home/pi/pipanel
-ExecStart=/usr/bin/python3 /home/pi/pipanel/main.py
+ExecStart=/home/pi/pipanel/.venv/bin/python3 /home/pi/pipanel/main.py
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-Environment=SDL_VIDEODRIVER=fbcon
-Environment=SDL_FBDEV=/dev/fb1
-Environment=SDL_NOMOUSE=1
 
 [Install]
 WantedBy=multi-user.target

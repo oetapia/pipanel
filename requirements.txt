@@ -1,0 +1,4 @@
+pygame
+python-socketio[client]
+requests
+numpy
