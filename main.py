@@ -23,6 +23,7 @@ _M   = _P["main"]
 _sdl = _P["sdl"]
 
 os.environ["SDL_VIDEODRIVER"] = "offscreen"
+os.environ["SDL_AUDIODRIVER"] = "dummy"
 
 SCREEN_W, SCREEN_H = _P["screen"]["w"], _P["screen"]["h"]
 FB = _sdl["fbdev"]
