@@ -1,13 +1,12 @@
 """
-Minimal display test for the 35panel (headless Pi, framebuffer).
-Draws a test pattern on /dev/fb1 at 480x320.
+Minimal display test for the 35panel (headless Pi, KMS/DRM).
+Draws a test pattern at 480x320.
 Press any key to exit.
 """
 import os
 import sys
 
-os.environ["SDL_VIDEODRIVER"] = "fbcon"
-os.environ["SDL_FBDEV"]       = "/dev/fb1"
+os.environ["SDL_VIDEODRIVER"] = "kmsdrm"
 
 import pygame
 
@@ -28,7 +27,7 @@ for i, c in enumerate(colors):
 # Text
 fnt = pygame.font.SysFont(None, 36)
 screen.blit(fnt.render("35panel OK  480x320", True, (255,255,255)), (20, H//3 + 20))
-screen.blit(fnt.render("fbcon  /dev/fb1",     True, (180,180,180)), (20, H//3 + 60))
+screen.blit(fnt.render("kmsdrm driver",       True, (180,180,180)), (20, H//3 + 60))
 screen.blit(fnt.render("press any key to exit", True, (100,200,100)), (20, H//3 + 100))
 
 pygame.display.flip()

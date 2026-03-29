@@ -1,7 +1,7 @@
 {
   "35panel": {
     "screen": { "w": 480, "h": 320 },
-    "sdl": { "videodriver": "fbcon", "fbdev": "/dev/fb1" },
+    "sdl": { "videodriver": "kmsdrm", "fbdev": null },
     "main": {
       "fonts": { "title": 40, "name": 30, "desc": 22, "hint": 20 },
       "title_x": 20, "title_y": 16,
