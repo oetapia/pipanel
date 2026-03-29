@@ -4,6 +4,7 @@ import os
 import select
 import sys
 import termios
+import time
 import tty
 import numpy as np
 import pygame
@@ -107,9 +108,10 @@ def run():
 
             draw()
 
-            launch  = None
-            running = True
-            clock   = pygame.time.Clock()
+            launch     = None
+            running    = True
+            clock      = pygame.time.Clock()
+            deadline   = time.monotonic() + 10
 
             while running:
                 key = _read_key()
@@ -125,6 +127,9 @@ def run():
                     elif key in ('\r', '\n'):  # enter
                         launch  = selected
                         running = False
+                elif time.monotonic() >= deadline:
+                    launch  = 0              # auto-launch Volumio
+                    running = False
                 clock.tick(30)
 
             if launch == 0:
