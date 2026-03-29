@@ -89,7 +89,7 @@ def run():
             fnt_desc  = pygame.font.SysFont(None, M["fonts"]["desc"])
             fnt_hint  = pygame.font.SysFont(None, M["fonts"]["hint"])
 
-            def draw():
+            def draw(countdown=None):
                 screen.fill(BLACK)
                 # Title + screen name
                 screen.blit(fnt_title.render("Apps", True, YELLOW),
@@ -121,12 +121,15 @@ def run():
                 pygame.draw.line(screen, GREY,
                                  (0, H - M["hint_line_offset"]),
                                  (W, H - M["hint_line_offset"]), 1)
-                screen.blit(fnt_hint.render(
-                    "↑↓ Select   Enter Launch   Tab Screen   ESC Quit", True, CYAN),
+                hint = "↑↓ Select   Enter Launch   Tab Screen   ESC Quit"
+                if countdown is not None:
+                    hint += f"   [{countdown}s]"
+                screen.blit(fnt_hint.render(hint, True, CYAN),
                     (M["title_x"], H - M["hint_text_offset"]))
                 fb_write(screen, FB)
 
-            draw()
+            last_countdown = 10
+            draw(last_countdown)
 
             launch       = None
             running      = True
@@ -142,10 +145,12 @@ def run():
                         return
                     elif key == '\x1b[A':
                         selected = (selected - 1) % len(APPS)
-                        draw()
+                        last_countdown = 10
+                        draw(last_countdown)
                     elif key == '\x1b[B':
                         selected = (selected + 1) % len(APPS)
-                        draw()
+                        last_countdown = 10
+                        draw(last_countdown)
                     elif key == '\t':
                         screen_idx    = (screen_idx + 1) % len(profile_names)
                         switch_screen = True
@@ -156,6 +161,11 @@ def run():
                 elif time.monotonic() >= deadline:
                     launch  = 0
                     running = False
+                else:
+                    remaining = max(0, int(deadline - time.monotonic()))
+                    if remaining != last_countdown:
+                        last_countdown = remaining
+                        draw(last_countdown)
                 clock.tick(30)
 
             if switch_screen:
@@ -174,7 +184,7 @@ def _launch_volumio(P, FB):
     import threading
     from apps.volumio import socket_thread, Display
     threading.Thread(target=socket_thread, daemon=True).start()
-    Display().run()
+    Display(P).run()
 
 
 def _launch_weather(P, FB):

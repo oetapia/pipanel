@@ -8,46 +8,11 @@ import socketio
 import requests
 import pygame
 
-# --- Profile ---
-def _load_profile():
-    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(_root, "profiles.json")) as f:
-        profiles = json.load(f)
-    return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
-
-_P  = _load_profile()
-_V  = _P["volumio"]
-_sdl = _P["sdl"]
-
-# --- Display setup ---
-os.environ.setdefault("SDL_VIDEODRIVER", _sdl["videodriver"])
-if _sdl.get("fbdev"):
-    os.environ.setdefault("SDL_FBDEV", _sdl["fbdev"])
-
 # --- Config ---
 VOLUMIO_HOST = "http://volumio.local"
 GENIUS_URL   = "http://volumio.local:4000/api/genius"
 LRCLIB_URL   = "http://volumio.local:4000/api/lrclib"
 TIDAL_URL    = "http://volumio.local:4000/api/tidal"
-
-SCREEN_W, SCREEN_H = _P["screen"]["w"], _P["screen"]["h"]
-
-# Column layout
-COL1_X, COL1_W = _V["col1_x"], _V["col1_w"]   # Lyrics
-COL2_X, COL2_W = _V["col2_x"], _V["col2_w"]   # Genius
-DIV_COL  = _V["div_col"]                        # Vertical divider
-DIV_BAR  = _V["div_bar"]                        # Horizontal divider above status bar
-
-# Status bar
-BAR_H    = SCREEN_H - DIV_BAR - 1
-BAR_Y1   = DIV_BAR + _V["bar_y1_offset"]
-BAR_Y2   = DIV_BAR + _V["bar_y2_offset"]
-
-# Lyrics
-LYRIC_TOP    = _V["lyric_top"]
-LYRIC_LINE_H = _V["lyric_line_h"]
-LYRIC_VISIBLE = int((DIV_BAR - LYRIC_TOP) / LYRIC_LINE_H)
-LYRIC_CENTRE  = LYRIC_VISIBLE // 2
 
 # --- Colours ---
 BLACK    = (0,   0,   0)
@@ -125,8 +90,6 @@ def seek_tick():
             if vol_state["status"] == "play":
                 lyr_state["current_ms"] = ms
                 lyr_state["dirty"] = True
-
-threading.Thread(target=seek_tick, daemon=True).start()
 
 
 # ===================================================================
@@ -235,6 +198,7 @@ def fetch_lyrics(title, artist, album, duration):
         update(lyr_lock, lyr_state, loading=False, error="Lyrics error")
         print(f"Lyrics: {e}")
 
+
 # ===================================================================
 # Tidal fetch
 # ===================================================================
@@ -274,7 +238,6 @@ def queue_tidal_tracks(tracks):
             "type": "song",
         })
 
-
 def fetch_similar_tracks(track_id):
     update(tidal_lock, tidal_state, loading=True, error="", tracks=[], mode="similar", show_right=True)
     try:
@@ -298,7 +261,6 @@ def fetch_album_tracks(track_id):
     except Exception as e:
         update(tidal_lock, tidal_state, loading=False, error="Tidal error")
         print(f"Tidal album: {e}")
-
 
 def maybe_fetch(title, artist, album="", duration=None):
     key = f"{title}|{artist}"
@@ -382,43 +344,39 @@ def socket_thread():
 # Display
 # ===================================================================
 class Display:
-    def __init__(self, P=None, FB=None):
-        if P is None:
-            P = _P
-        V = P["volumio"]
-        W, H = P["screen"]["w"], P["screen"]["h"]
-        self.FB  = FB or _sdl.get("fbdev")
-        self.W   = W
-        self.H   = H
-        self.COL1_X = V["col1_x"];  self.COL1_W = V["col1_w"]
-        self.COL2_X = V["col2_x"];  self.COL2_W = V["col2_w"]
-        self.DIV_COL = V["div_col"]
-        self.DIV_BAR = V["div_bar"]
-        self.BAR_Y1  = V["div_bar"] + V["bar_y1_offset"]
-        self.BAR_Y2  = V["div_bar"] + V["bar_y2_offset"]
+    def __init__(self, P):
+        V   = P["volumio"]
+        sdl = P["sdl"]
+
+        self.W             = P["screen"]["w"]
+        self.H             = P["screen"]["h"]
+        self.COL1_X        = V["col1_x"]
+        self.COL1_W        = V["col1_w"]
+        self.COL2_X        = V["col2_x"]
+        self.COL2_W        = V["col2_w"]
+        self.DIV_COL       = V["div_col"]
+        self.DIV_BAR       = V["div_bar"]
+        self.BAR_Y1        = self.DIV_BAR + V["bar_y1_offset"]
+        self.BAR_Y2        = self.DIV_BAR + V["bar_y2_offset"]
         self.LYRIC_TOP     = V["lyric_top"]
         self.LYRIC_LINE_H  = V["lyric_line_h"]
-        self.LYRIC_VISIBLE = int((V["div_bar"] - V["lyric_top"]) / V["lyric_line_h"])
+        self.LYRIC_VISIBLE = int((self.DIV_BAR - self.LYRIC_TOP) / self.LYRIC_LINE_H)
         self.LYRIC_CENTRE  = self.LYRIC_VISIBLE // 2
         self.QUEUE_ITEM_H  = V["queue_item_h"]
 
+        threading.Thread(target=seek_tick, daemon=True).start()
+
+        os.environ["SDL_VIDEODRIVER"] = sdl["videodriver"]
+        if sdl.get("fbdev"):
+            os.environ["SDL_FBDEV"] = sdl["fbdev"]
         pygame.display.quit()
         pygame.display.init()
-        self.screen = pygame.display.set_mode((W, H))
+        self.screen = pygame.display.set_mode((self.W, self.H))
         pygame.mouse.set_visible(False)
         self.fnt_lg  = pygame.font.SysFont(None, V["fonts"]["lg"])
         self.fnt_md  = pygame.font.SysFont(None, V["fonts"]["md"])
         self.fnt_sm  = pygame.font.SysFont(None, V["fonts"]["sm"])
         self.fnt_lyr = pygame.font.SysFont(None, V["fonts"]["lyr"])
-
-    def _fb_write(self):
-        import numpy as np
-        raw = pygame.surfarray.array3d(self.screen).transpose(1, 0, 2)
-        r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
-        g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
-        b =  raw[:, :, 2].astype(np.uint16) >> 3
-        with open(self.FB, "wb") as f:
-            f.write((r | g | b).astype(np.uint16).tobytes())
 
     def t(self, txt, x, y, col, fnt=None, max_w=None):
         fnt = fnt or self.fnt_md
@@ -532,8 +490,8 @@ class Display:
     def draw_queue(self, q):
         x, w = self.COL1_X + 4, self.COL1_W - 8
         y = 4
-        items   = q["items"]
-        pos     = q["position"]
+        items = q["items"]
+        pos   = q["position"]
 
         self.t("QUEUE", x, y, LGREY, self.fnt_md)
         pygame.draw.line(self.screen, GREY, (x, y + 18), (x + w, y + 18), 1)
@@ -543,11 +501,10 @@ class Display:
             self.t("Queue is empty", x, y, GREY, self.fnt_sm)
             return
 
-        # Centre the current track, same logic as lyrics
-        item_h   = self.QUEUE_ITEM_H
-        visible  = int((self.DIV_BAR - y) / item_h)
-        centre   = visible // 2
-        start    = max(0, pos - centre)
+        item_h  = self.QUEUE_ITEM_H
+        visible = int((self.DIV_BAR - y) / item_h)
+        centre  = visible // 2
+        start   = max(0, pos - centre)
 
         for i, item in enumerate(items[start: start + visible]):
             abs_idx = start + i
@@ -570,7 +527,6 @@ class Display:
     def draw_statusbar(self, v):
         x, w = 4, self.W - 8
 
-        # Status icon
         if v["status"] == "play":
             icon, col = "▶", GREEN
         elif v["status"] == "pause":
@@ -579,16 +535,13 @@ class Display:
             icon, col = "■", RED
         self.t(icon, x, self.BAR_Y1, col, self.fnt_md)
 
-        # Title · Artist · Album
         info = " · ".join(filter(None, [v["title"], v["artist"], v["album"]]))
         self.t(info, x + 20, self.BAR_Y1, WHITE, self.fnt_sm, max_w=w - 60)
 
-        # Bitrate (right aligned)
         if v["bitrate"]:
             bw = self.fnt_sm.size(v["bitrate"])[0]
             self.t(v["bitrate"], self.W - bw - 4, self.BAR_Y1, GREY, self.fnt_sm)
 
-        # Error / connection status on second line
         if not v["connected"]:
             self.t(v["error"] or "Connecting...", x, self.BAR_Y2, ORANGE, self.fnt_sm)
 
@@ -600,7 +553,8 @@ class Display:
 
         show_left = t["show_lyrics"]
         if show_left and t["show_right"]:
-            pygame.draw.line(self.screen, GREY, (self.DIV_COL, 0), (self.DIV_COL, self.DIV_BAR), 1)
+            pygame.draw.line(self.screen, GREY,
+                             (self.DIV_COL, 0), (self.DIV_COL, self.DIV_BAR), 1)
 
         if show_left:
             self.draw_lyrics(l)
@@ -614,8 +568,7 @@ class Display:
                 self.draw_tidal(t)
 
         self.draw_statusbar(v)
-
-        self._fb_write()
+        pygame.display.flip()
 
     def run(self):
         print("Display running. Ctrl+C to quit.")
@@ -680,7 +633,7 @@ class Display:
                                    loading=False, error="No Tidal track ID")
                     elif k == pygame.K_q:
                         with tidal_lock:
-                            mode = tidal_state["mode"]
+                            mode   = tidal_state["mode"]
                             tracks = list(tidal_state["tracks"])
                         if mode in ("similar", "album") and tracks:
                             threading.Thread(target=queue_tidal_tracks,
@@ -710,12 +663,18 @@ class Display:
 
 
 # ===================================================================
-# Main
+# Main (standalone)
 # ===================================================================
 if __name__ == "__main__":
+    def _load_profile():
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(_root, "profiles.json")) as f:
+            profiles = json.load(f)
+        return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
+
     threading.Thread(target=socket_thread, daemon=True).start()
     try:
-        Display().run()
+        Display(_load_profile()).run()
     except KeyboardInterrupt:
         pass
     finally:
