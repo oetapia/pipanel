@@ -174,7 +174,7 @@ def _launch_volumio(P, FB):
     import threading
     from apps.volumio import socket_thread, Display
     threading.Thread(target=socket_thread, daemon=True).start()
-    Display(P, FB).run()
+    Display().run()
 
 
 def _launch_weather(P, FB):

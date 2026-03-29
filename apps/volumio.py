@@ -382,14 +382,43 @@ def socket_thread():
 # Display
 # ===================================================================
 class Display:
-    def __init__(self):
-        pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+    def __init__(self, P=None, FB=None):
+        if P is None:
+            P = _P
+        V = P["volumio"]
+        W, H = P["screen"]["w"], P["screen"]["h"]
+        self.FB  = FB or _sdl.get("fbdev")
+        self.W   = W
+        self.H   = H
+        self.COL1_X = V["col1_x"];  self.COL1_W = V["col1_w"]
+        self.COL2_X = V["col2_x"];  self.COL2_W = V["col2_w"]
+        self.DIV_COL = V["div_col"]
+        self.DIV_BAR = V["div_bar"]
+        self.BAR_Y1  = V["div_bar"] + V["bar_y1_offset"]
+        self.BAR_Y2  = V["div_bar"] + V["bar_y2_offset"]
+        self.LYRIC_TOP     = V["lyric_top"]
+        self.LYRIC_LINE_H  = V["lyric_line_h"]
+        self.LYRIC_VISIBLE = int((V["div_bar"] - V["lyric_top"]) / V["lyric_line_h"])
+        self.LYRIC_CENTRE  = self.LYRIC_VISIBLE // 2
+        self.QUEUE_ITEM_H  = V["queue_item_h"]
+
+        pygame.display.quit()
+        pygame.display.init()
+        self.screen = pygame.display.set_mode((W, H))
         pygame.mouse.set_visible(False)
-        self.fnt_lg  = pygame.font.SysFont(None, _V["fonts"]["lg"])
-        self.fnt_md  = pygame.font.SysFont(None, _V["fonts"]["md"])
-        self.fnt_sm  = pygame.font.SysFont(None, _V["fonts"]["sm"])
-        self.fnt_lyr = pygame.font.SysFont(None, _V["fonts"]["lyr"])
+        self.fnt_lg  = pygame.font.SysFont(None, V["fonts"]["lg"])
+        self.fnt_md  = pygame.font.SysFont(None, V["fonts"]["md"])
+        self.fnt_sm  = pygame.font.SysFont(None, V["fonts"]["sm"])
+        self.fnt_lyr = pygame.font.SysFont(None, V["fonts"]["lyr"])
+
+    def _fb_write(self):
+        import numpy as np
+        raw = pygame.surfarray.array3d(self.screen).transpose(1, 0, 2)
+        r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
+        g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
+        b =  raw[:, :, 2].astype(np.uint16) >> 3
+        with open(self.FB, "wb") as f:
+            f.write((r | g | b).astype(np.uint16).tobytes())
 
     def t(self, txt, x, y, col, fnt=None, max_w=None):
         fnt = fnt or self.fnt_md
@@ -401,14 +430,14 @@ class Display:
 
     # ------------------------------------------------------------------
     def draw_lyrics(self, l):
-        x, w = COL1_X + 4, COL1_W - 8
+        x, w = self.COL1_X + 4, self.COL1_W - 8
 
         if l["loading"]:
-            self.t("Loading lyrics...", x, SCREEN_H // 2, LGREY, self.fnt_sm)
+            self.t("Loading lyrics...", x, self.H // 2, LGREY, self.fnt_sm)
             return
         if not l["lines"]:
             if l["error"]:
-                self.t(l["error"], x, SCREEN_H // 2, GREY, self.fnt_sm)
+                self.t(l["error"], x, self.H // 2, GREY, self.fnt_sm)
             return
 
         lines     = l["lines"]
@@ -421,25 +450,25 @@ class Display:
                 if ln["time_ms"] <= cur_ms:
                     cur_idx = i
 
-        start   = max(0, cur_idx - LYRIC_CENTRE)
-        visible = lines[start: start + LYRIC_VISIBLE]
+        start   = max(0, cur_idx - self.LYRIC_CENTRE)
+        visible = lines[start: start + self.LYRIC_VISIBLE]
 
         for i, ln in enumerate(visible):
             abs_idx = start + i
             is_cur  = (abs_idx == cur_idx) and is_synced
             col     = WHITE if is_cur else GREY
             fnt     = self.fnt_lg if is_cur else self.fnt_lyr
-            line_y  = LYRIC_TOP + i * LYRIC_LINE_H
+            line_y  = self.LYRIC_TOP + i * self.LYRIC_LINE_H
 
             if is_cur:
                 pygame.draw.rect(self.screen, HLBG,
-                                 (COL1_X, line_y - 2, COL1_W, LYRIC_LINE_H + 2))
+                                 (self.COL1_X, line_y - 2, self.COL1_W, self.LYRIC_LINE_H + 2))
 
             self.t(ln["text"] or " ", x, line_y, col, fnt, max_w=w)
 
     # ------------------------------------------------------------------
     def draw_genius(self, g):
-        x, w = COL2_X + 4, COL2_W - 8
+        x, w = self.COL2_X + 4, self.COL2_W - 8
         y = 4
 
         self.t("GENIUS", x, y, PURPLE, self.fnt_md)
@@ -463,23 +492,23 @@ class Display:
             for s in g["samples"][:5]:
                 self.t(s, x, y, DIMWHITE, self.fnt_sm, max_w=w)
                 y += 14
-                if y > DIV_BAR - 10: break
+                if y > self.DIV_BAR - 10: break
 
-        if g["sampled_in"] and y < DIV_BAR - 10:
+        if g["sampled_in"] and y < self.DIV_BAR - 10:
             y += 4
             self.t("Sampled in:", x, y, YELLOW, self.fnt_sm)
             y += 16
             for s in g["sampled_in"][:5]:
                 self.t(s, x, y, DIMWHITE, self.fnt_sm, max_w=w)
                 y += 14
-                if y > DIV_BAR - 10: break
+                if y > self.DIV_BAR - 10: break
 
         if not g["samples"] and not g["sampled_in"] and not g["loading"] and not g["error"]:
             self.t("No samples", x, y, GREY, self.fnt_sm)
 
     # ------------------------------------------------------------------
     def draw_tidal(self, t):
-        x, w = COL2_X + 4, COL2_W - 8
+        x, w = self.COL2_X + 4, self.COL2_W - 8
         y = 4
 
         label = "SIMILAR" if t["mode"] == "similar" else "ALBUM"
@@ -496,12 +525,12 @@ class Display:
         for track in t["tracks"]:
             self.t(track["label"], x, y, DIMWHITE, self.fnt_sm, max_w=w)
             y += 14
-            if y > DIV_BAR - 10:
+            if y > self.DIV_BAR - 10:
                 break
 
     # ------------------------------------------------------------------
     def draw_queue(self, q):
-        x, w = COL1_X + 4, COL1_W - 8
+        x, w = self.COL1_X + 4, self.COL1_W - 8
         y = 4
         items   = q["items"]
         pos     = q["position"]
@@ -515,8 +544,8 @@ class Display:
             return
 
         # Centre the current track, same logic as lyrics
-        item_h   = _V["queue_item_h"]
-        visible  = int((DIV_BAR - y) / item_h)
+        item_h   = self.QUEUE_ITEM_H
+        visible  = int((self.DIV_BAR - y) / item_h)
         centre   = visible // 2
         start    = max(0, pos - centre)
 
@@ -525,7 +554,7 @@ class Display:
             is_cur  = abs_idx == pos
             if is_cur:
                 pygame.draw.rect(self.screen, HLBG,
-                                 (COL1_X, y - 2, COL1_W, item_h))
+                                 (self.COL1_X, y - 2, self.COL1_W, item_h))
 
             title  = item.get("title",  "") or ""
             artist = item.get("artist", "") or ""
@@ -534,12 +563,12 @@ class Display:
             self.t(title,  x, y,      col_t, self.fnt_sm, max_w=w)
             self.t(artist, x, y + 14, col_a, self.fnt_sm, max_w=w)
             y += item_h
-            if y > DIV_BAR - 4:
+            if y > self.DIV_BAR - 4:
                 break
 
     # ------------------------------------------------------------------
     def draw_statusbar(self, v):
-        x, w = 4, SCREEN_W - 8
+        x, w = 4, self.W - 8
 
         # Status icon
         if v["status"] == "play":
@@ -548,30 +577,30 @@ class Display:
             icon, col = "⏸", YELLOW
         else:
             icon, col = "■", RED
-        self.t(icon, x, BAR_Y1, col, self.fnt_md)
+        self.t(icon, x, self.BAR_Y1, col, self.fnt_md)
 
         # Title · Artist · Album
         info = " · ".join(filter(None, [v["title"], v["artist"], v["album"]]))
-        self.t(info, x + 20, BAR_Y1, WHITE, self.fnt_sm, max_w=w - 60)
+        self.t(info, x + 20, self.BAR_Y1, WHITE, self.fnt_sm, max_w=w - 60)
 
         # Bitrate (right aligned)
         if v["bitrate"]:
             bw = self.fnt_sm.size(v["bitrate"])[0]
-            self.t(v["bitrate"], SCREEN_W - bw - 4, BAR_Y1, GREY, self.fnt_sm)
+            self.t(v["bitrate"], self.W - bw - 4, self.BAR_Y1, GREY, self.fnt_sm)
 
         # Error / connection status on second line
         if not v["connected"]:
-            self.t(v["error"] or "Connecting...", x, BAR_Y2, ORANGE, self.fnt_sm)
+            self.t(v["error"] or "Connecting...", x, self.BAR_Y2, ORANGE, self.fnt_sm)
 
     # ------------------------------------------------------------------
     def draw(self, v, g, l, t, q):
         self.screen.fill(BLACK)
 
-        pygame.draw.line(self.screen, GREY, (0, DIV_BAR), (SCREEN_W, DIV_BAR), 1)
+        pygame.draw.line(self.screen, GREY, (0, self.DIV_BAR), (self.W, self.DIV_BAR), 1)
 
         show_left = t["show_lyrics"]
         if show_left and t["show_right"]:
-            pygame.draw.line(self.screen, GREY, (DIV_COL, 0), (DIV_COL, DIV_BAR), 1)
+            pygame.draw.line(self.screen, GREY, (self.DIV_COL, 0), (self.DIV_COL, self.DIV_BAR), 1)
 
         if show_left:
             self.draw_lyrics(l)
@@ -586,7 +615,7 @@ class Display:
 
         self.draw_statusbar(v)
 
-        pygame.display.flip()
+        self._fb_write()
 
     def run(self):
         print("Display running. Ctrl+C to quit.")
