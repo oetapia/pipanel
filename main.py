@@ -1,6 +1,10 @@
 import argparse
 import json
 import os
+import select
+import sys
+import termios
+import tty
 import numpy as np
 import pygame
 
@@ -50,72 +54,86 @@ def fb_write(surface):
         f.write((r | g | b).astype(np.uint16).tobytes())
 
 
+def _read_key():
+    """Non-blocking read from stdin. Returns key string or None."""
+    if not select.select([sys.stdin], [], [], 0)[0]:
+        return None
+    ch = sys.stdin.read(1)
+    if ch == '\x1b' and select.select([sys.stdin], [], [], 0.05)[0]:
+        ch += sys.stdin.read(2)  # read rest of escape sequence (arrow keys)
+    return ch
+
+
 def run():
     selected = 0
     pygame.init()
 
-    while True:
-        screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-        pygame.mouse.set_visible(False)
+    fd  = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    tty.setraw(fd)
 
-        fnt_title = pygame.font.SysFont(None, _M["fonts"]["title"])
-        fnt_name  = pygame.font.SysFont(None, _M["fonts"]["name"])
-        fnt_desc  = pygame.font.SysFont(None, _M["fonts"]["desc"])
-        fnt_hint  = pygame.font.SysFont(None, _M["fonts"]["hint"])
+    try:
+        while True:
+            screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+            pygame.mouse.set_visible(False)
 
-        def draw():
-            screen.fill(BLACK)
-            screen.blit(fnt_title.render("Apps", True, YELLOW), (_M["title_x"], _M["title_y"]))
-            pygame.draw.line(screen, YELLOW, (_M["title_x"], _M["divider_y"]), (SCREEN_W - _M["title_x"], _M["divider_y"]), 1)
+            fnt_title = pygame.font.SysFont(None, _M["fonts"]["title"])
+            fnt_name  = pygame.font.SysFont(None, _M["fonts"]["name"])
+            fnt_desc  = pygame.font.SysFont(None, _M["fonts"]["desc"])
+            fnt_hint  = pygame.font.SysFont(None, _M["fonts"]["hint"])
 
-            y = _M["apps_y"]
-            for i, app in enumerate(APPS):
-                if i == selected:
-                    pygame.draw.rect(screen, HLBG, (_M["highlight_x_pad"], y - 6, SCREEN_W - _M["highlight_w_pad"], _M["highlight_h"]))
-                    name_col = WHITE
-                    prefix   = ">"
-                else:
-                    name_col = GREY
-                    prefix   = " "
-                screen.blit(fnt_name.render(f"{prefix} {app['name']}", True, name_col), (_M["title_x"], y))
-                screen.blit(fnt_desc.render(app["description"], True, CYAN), (_M["desc_x_indent"], y + _M["desc_y_offset"]))
-                y += _M["app_item_h"]
+            def draw():
+                screen.fill(BLACK)
+                screen.blit(fnt_title.render("Apps", True, YELLOW), (_M["title_x"], _M["title_y"]))
+                pygame.draw.line(screen, YELLOW, (_M["title_x"], _M["divider_y"]), (SCREEN_W - _M["title_x"], _M["divider_y"]), 1)
 
-            pygame.draw.line(screen, GREY, (0, SCREEN_H - _M["hint_line_offset"]), (SCREEN_W, SCREEN_H - _M["hint_line_offset"]), 1)
-            screen.blit(fnt_hint.render("↑↓ Select   Enter Launch   ESC Quit", True, CYAN),
-                        (_M["title_x"], SCREEN_H - _M["hint_text_offset"]))
-            fb_write(screen)
+                y = _M["apps_y"]
+                for i, app in enumerate(APPS):
+                    if i == selected:
+                        pygame.draw.rect(screen, HLBG, (_M["highlight_x_pad"], y - 6, SCREEN_W - _M["highlight_w_pad"], _M["highlight_h"]))
+                        name_col = WHITE
+                        prefix   = ">"
+                    else:
+                        name_col = GREY
+                        prefix   = " "
+                    screen.blit(fnt_name.render(f"{prefix} {app['name']}", True, name_col), (_M["title_x"], y))
+                    screen.blit(fnt_desc.render(app["description"], True, CYAN), (_M["desc_x_indent"], y + _M["desc_y_offset"]))
+                    y += _M["app_item_h"]
 
-        draw()
+                pygame.draw.line(screen, GREY, (0, SCREEN_H - _M["hint_line_offset"]), (SCREEN_W, SCREEN_H - _M["hint_line_offset"]), 1)
+                screen.blit(fnt_hint.render("↑↓ Select   Enter Launch   ESC Quit", True, CYAN),
+                            (_M["title_x"], SCREEN_H - _M["hint_text_offset"]))
+                fb_write(screen)
 
-        launch  = None
-        running = True
-        clock   = pygame.time.Clock()
+            draw()
 
-        while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    return
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        pygame.quit()
+            launch  = None
+            running = True
+            clock   = pygame.time.Clock()
+
+            while running:
+                key = _read_key()
+                if key is not None:
+                    if key in ('\x1b', 'q', 'Q'):
                         return
-                    elif event.key == pygame.K_UP:
+                    elif key == '\x1b[A':    # up arrow
                         selected = (selected - 1) % len(APPS)
                         draw()
-                    elif event.key == pygame.K_DOWN:
+                    elif key == '\x1b[B':    # down arrow
                         selected = (selected + 1) % len(APPS)
                         draw()
-                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    elif key in ('\r', '\n'):  # enter
                         launch  = selected
                         running = False
-            clock.tick(30)
+                clock.tick(30)
 
-        if launch == 0:
-            _launch_volumio()
-        elif launch == 1:
-            _launch_weather()
+            if launch == 0:
+                _launch_volumio()
+            elif launch == 1:
+                _launch_weather()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 def _launch_volumio():
