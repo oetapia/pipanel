@@ -1,23 +1,31 @@
+import argparse
 import json
 import os
-import sys
+import numpy as np
 import pygame
 
-def _load_profile():
+def _load_profile(name):
     _root = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(_root, "profiles.json")) as f:
         profiles = json.load(f)
-    return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
+    if name not in profiles:
+        raise SystemExit(f"Unknown profile '{name}'. Available: {', '.join(profiles)}")
+    return profiles[name]
 
-_P  = _load_profile()
-_M  = _P["main"]
+def _parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--screen", default="35panel", help="Profile name (e.g. 35panel, 1080TV)")
+    return parser.parse_args()
+
+_args = _parse_args()
+_P   = _load_profile(_args.screen)
+_M   = _P["main"]
 _sdl = _P["sdl"]
 
-os.environ.setdefault("SDL_VIDEODRIVER", _sdl["videodriver"])
-if _sdl.get("fbdev"):
-    os.environ.setdefault("SDL_FBDEV", _sdl["fbdev"])
+os.environ["SDL_VIDEODRIVER"] = "offscreen"
 
 SCREEN_W, SCREEN_H = _P["screen"]["w"], _P["screen"]["h"]
+FB = _sdl["fbdev"]
 
 APPS = [
     {"name": "MUSIC PLAYER", "description": "Volumio controls"},
@@ -32,13 +40,21 @@ GREY   = (80,  80,  80)
 HLBG   = (20,  20,  60)
 
 
+def fb_write(surface):
+    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)  # (H, W, 3)
+    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
+    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
+    b =  raw[:, :, 2].astype(np.uint16) >> 3
+    with open(FB, "wb") as f:
+        f.write((r | g | b).astype(np.uint16).tobytes())
+
+
 def run():
     selected = 0
     pygame.init()
 
     while True:
         screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-        pygame.display.set_caption("pipanel")
         pygame.mouse.set_visible(False)
 
         fnt_title = pygame.font.SysFont(None, _M["fonts"]["title"])
@@ -67,7 +83,7 @@ def run():
             pygame.draw.line(screen, GREY, (0, SCREEN_H - _M["hint_line_offset"]), (SCREEN_W, SCREEN_H - _M["hint_line_offset"]), 1)
             screen.blit(fnt_hint.render("↑↓ Select   Enter Launch   ESC Quit", True, CYAN),
                         (_M["title_x"], SCREEN_H - _M["hint_text_offset"]))
-            pygame.display.flip()
+            fb_write(screen)
 
         draw()
 
