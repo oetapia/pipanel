@@ -1,17 +1,25 @@
 """
-Minimal display test for HDMI output (1080p, KMSDRM).
-Press any key to exit.
+Minimal display test for HDMI output (1080p).
+Renders offscreen with pygame, converts to RGB565, writes directly to /dev/fb0.
 """
 import os
 import pygame
+import numpy as np
 
-os.environ["SDL_VIDEODRIVER"] = "KMSDRM"
-
+FB = "/dev/fb0"
 W, H = 1920, 1080
 
+os.environ["SDL_VIDEODRIVER"] = "offscreen"
 pygame.init()
 screen = pygame.display.set_mode((W, H))
-pygame.mouse.set_visible(False)
+
+def fb_write(surface):
+    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)  # (H, W, 3)
+    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
+    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
+    b =  raw[:, :, 2].astype(np.uint16) >> 3
+    with open(FB, "wb") as f:
+        f.write((r | g | b).astype(np.uint16).tobytes())
 
 colors = [(255,0,0),(0,255,0),(0,0,255),(255,255,0),(0,255,255),(255,0,255),(255,255,255)]
 bar_w = W // len(colors)
@@ -21,15 +29,8 @@ for i, c in enumerate(colors):
 
 fnt = pygame.font.SysFont(None, 96)
 screen.blit(fnt.render("HDMI OK  1920x1080", True, (255, 255, 255)), (60, H//3 + 60))
-screen.blit(fnt.render("KMSDRM driver",      True, (180, 180, 180)), (60, H//3 + 180))
-screen.blit(fnt.render("press any key to exit", True, (100, 200, 100)), (60, H//3 + 300))
+screen.blit(fnt.render("offscreen -> /dev/fb0", True, (180, 180, 180)), (60, H//3 + 180))
 
-pygame.display.flip()
-
-clock = pygame.time.Clock()
-while True:
-    for event in pygame.event.get():
-        if event.type in (pygame.QUIT, pygame.KEYDOWN):
-            pygame.quit()
-            raise SystemExit
-    clock.tick(10)
+fb_write(screen)
+print("Written to /dev/fb0 — check the display.")
+pygame.quit()
