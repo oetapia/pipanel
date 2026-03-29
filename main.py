@@ -116,6 +116,7 @@ def run():
             while running:
                 key = _read_key()
                 if key is not None:
+                    deadline = time.monotonic() + 10
                     if key in ('\x1b', 'q', 'Q'):
                         return
                     elif key == '\x1b[A':    # up arrow
