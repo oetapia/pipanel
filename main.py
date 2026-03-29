@@ -9,29 +9,21 @@ import tty
 import numpy as np
 import pygame
 
-def _load_profile(name):
-    _root = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(_root, "profiles.json")) as f:
-        profiles = json.load(f)
-    if name not in profiles:
-        raise SystemExit(f"Unknown profile '{name}'. Available: {', '.join(profiles)}")
-    return profiles[name]
+_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-def _parse_args():
+def _load_profiles():
+    with open(os.path.join(_ROOT, "profiles.json")) as f:
+        return json.load(f)
+
+def _parse_args(profile_names):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--screen", default="35panel", help="Profile name (e.g. 35panel, 1080TV)")
+    parser.add_argument("--screen", default=profile_names[0],
+                        choices=profile_names,
+                        help=f"Profile name ({', '.join(profile_names)})")
     return parser.parse_args()
-
-_args = _parse_args()
-_P   = _load_profile(_args.screen)
-_M   = _P["main"]
-_sdl = _P["sdl"]
 
 os.environ["SDL_VIDEODRIVER"] = "offscreen"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
-
-SCREEN_W, SCREEN_H = _P["screen"]["w"], _P["screen"]["h"]
-FB = _sdl["fbdev"]
 
 APPS = [
     {"name": "MUSIC PLAYER", "description": "Volumio controls"},
@@ -46,27 +38,32 @@ GREY   = (80,  80,  80)
 HLBG   = (20,  20,  60)
 
 
-def fb_write(surface):
-    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)  # (H, W, 3)
+def fb_write(surface, fb):
+    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
     r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
     g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
     b =  raw[:, :, 2].astype(np.uint16) >> 3
-    with open(FB, "wb") as f:
+    with open(fb, "wb") as f:
         f.write((r | g | b).astype(np.uint16).tobytes())
 
 
 def _read_key():
-    """Non-blocking read from stdin. Returns key string or None."""
     if not select.select([sys.stdin], [], [], 0)[0]:
         return None
     ch = sys.stdin.read(1)
     if ch == '\x1b' and select.select([sys.stdin], [], [], 0.05)[0]:
-        ch += sys.stdin.read(2)  # read rest of escape sequence (arrow keys)
+        ch += sys.stdin.read(2)
     return ch
 
 
 def run():
-    selected = 0
+    profiles     = _load_profiles()
+    profile_names = list(profiles.keys())
+    args         = _parse_args(profile_names)
+
+    screen_idx = profile_names.index(args.screen)
+    selected   = 0
+
     pygame.init()
 
     fd  = sys.stdin.fileno()
@@ -75,43 +72,67 @@ def run():
 
     try:
         while True:
-            screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+            # Load current profile
+            profile_name = profile_names[screen_idx]
+            P  = profiles[profile_name]
+            M  = P["main"]
+            FB = P["sdl"]["fbdev"]
+            W, H = P["screen"]["w"], P["screen"]["h"]
+
+            pygame.display.quit()
+            pygame.display.init()
+            screen = pygame.display.set_mode((W, H))
             pygame.mouse.set_visible(False)
 
-            fnt_title = pygame.font.SysFont(None, _M["fonts"]["title"])
-            fnt_name  = pygame.font.SysFont(None, _M["fonts"]["name"])
-            fnt_desc  = pygame.font.SysFont(None, _M["fonts"]["desc"])
-            fnt_hint  = pygame.font.SysFont(None, _M["fonts"]["hint"])
+            fnt_title = pygame.font.SysFont(None, M["fonts"]["title"])
+            fnt_name  = pygame.font.SysFont(None, M["fonts"]["name"])
+            fnt_desc  = pygame.font.SysFont(None, M["fonts"]["desc"])
+            fnt_hint  = pygame.font.SysFont(None, M["fonts"]["hint"])
 
             def draw():
                 screen.fill(BLACK)
-                screen.blit(fnt_title.render("Apps", True, YELLOW), (_M["title_x"], _M["title_y"]))
-                pygame.draw.line(screen, YELLOW, (_M["title_x"], _M["divider_y"]), (SCREEN_W - _M["title_x"], _M["divider_y"]), 1)
+                # Title + screen name
+                screen.blit(fnt_title.render("Apps", True, YELLOW),
+                            (M["title_x"], M["title_y"]))
+                screen_label = fnt_desc.render(f"[Tab] {profile_name}", True, GREY)
+                screen.blit(screen_label,
+                            (W - screen_label.get_width() - M["title_x"], M["title_y"] + 4))
+                pygame.draw.line(screen, YELLOW,
+                                 (M["title_x"], M["divider_y"]),
+                                 (W - M["title_x"], M["divider_y"]), 1)
 
-                y = _M["apps_y"]
+                y = M["apps_y"]
                 for i, app in enumerate(APPS):
                     if i == selected:
-                        pygame.draw.rect(screen, HLBG, (_M["highlight_x_pad"], y - 6, SCREEN_W - _M["highlight_w_pad"], _M["highlight_h"]))
+                        pygame.draw.rect(screen, HLBG,
+                                         (M["highlight_x_pad"], y - 6,
+                                          W - M["highlight_w_pad"], M["highlight_h"]))
                         name_col = WHITE
                         prefix   = ">"
                     else:
                         name_col = GREY
                         prefix   = " "
-                    screen.blit(fnt_name.render(f"{prefix} {app['name']}", True, name_col), (_M["title_x"], y))
-                    screen.blit(fnt_desc.render(app["description"], True, CYAN), (_M["desc_x_indent"], y + _M["desc_y_offset"]))
-                    y += _M["app_item_h"]
+                    screen.blit(fnt_name.render(f"{prefix} {app['name']}", True, name_col),
+                                (M["title_x"], y))
+                    screen.blit(fnt_desc.render(app["description"], True, CYAN),
+                                (M["desc_x_indent"], y + M["desc_y_offset"]))
+                    y += M["app_item_h"]
 
-                pygame.draw.line(screen, GREY, (0, SCREEN_H - _M["hint_line_offset"]), (SCREEN_W, SCREEN_H - _M["hint_line_offset"]), 1)
-                screen.blit(fnt_hint.render("↑↓ Select   Enter Launch   ESC Quit", True, CYAN),
-                            (_M["title_x"], SCREEN_H - _M["hint_text_offset"]))
-                fb_write(screen)
+                pygame.draw.line(screen, GREY,
+                                 (0, H - M["hint_line_offset"]),
+                                 (W, H - M["hint_line_offset"]), 1)
+                screen.blit(fnt_hint.render(
+                    "↑↓ Select   Enter Launch   Tab Screen   ESC Quit", True, CYAN),
+                    (M["title_x"], H - M["hint_text_offset"]))
+                fb_write(screen, FB)
 
             draw()
 
-            launch     = None
-            running    = True
-            clock      = pygame.time.Clock()
-            deadline   = time.monotonic() + 10
+            launch       = None
+            running      = True
+            clock        = pygame.time.Clock()
+            deadline     = time.monotonic() + 10
+            switch_screen = False
 
             while running:
                 key = _read_key()
@@ -119,39 +140,46 @@ def run():
                     deadline = time.monotonic() + 10
                     if key in ('\x1b', 'q', 'Q'):
                         return
-                    elif key == '\x1b[A':    # up arrow
+                    elif key == '\x1b[A':
                         selected = (selected - 1) % len(APPS)
                         draw()
-                    elif key == '\x1b[B':    # down arrow
+                    elif key == '\x1b[B':
                         selected = (selected + 1) % len(APPS)
                         draw()
-                    elif key in ('\r', '\n'):  # enter
+                    elif key == '\t':
+                        screen_idx    = (screen_idx + 1) % len(profile_names)
+                        switch_screen = True
+                        running       = False
+                    elif key in ('\r', '\n'):
                         launch  = selected
                         running = False
                 elif time.monotonic() >= deadline:
-                    launch  = 0              # auto-launch Volumio
+                    launch  = 0
                     running = False
                 clock.tick(30)
 
+            if switch_screen:
+                continue  # restart outer loop with new profile
+
             if launch == 0:
-                _launch_volumio()
+                _launch_volumio(P, FB)
             elif launch == 1:
-                _launch_weather()
+                _launch_weather(P, FB)
 
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def _launch_volumio():
+def _launch_volumio(P, FB):
     import threading
     from apps.volumio import socket_thread, Display
     threading.Thread(target=socket_thread, daemon=True).start()
-    Display().run()
+    Display(P, FB).run()
 
 
-def _launch_weather():
+def _launch_weather(P, FB):
     from apps.weather import WeatherApp
-    WeatherApp().run()
+    WeatherApp(P, FB).run()
 
 
 if __name__ == "__main__":
