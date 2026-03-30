@@ -6,7 +6,17 @@ import time
 import threading
 import socketio
 import requests
+import numpy as np
 import pygame
+
+def fb_write(surface, fb):
+    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
+    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
+    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
+    b =  raw[:, :, 2].astype(np.uint16) >> 3
+    with open(fb, "wb") as f:
+        f.write((r | g | b).astype(np.uint16).tobytes())
+
 
 # --- Config ---
 VOLUMIO_HOST = "http://volumio.local"
@@ -366,9 +376,8 @@ class Display:
 
         threading.Thread(target=seek_tick, daemon=True).start()
 
-        os.environ["SDL_VIDEODRIVER"] = sdl["videodriver"]
-        if sdl.get("fbdev"):
-            os.environ["SDL_FBDEV"] = sdl["fbdev"]
+        os.environ["SDL_VIDEODRIVER"] = "offscreen"
+        self.fb = sdl["fbdev"]
         pygame.init()
         self.screen = pygame.display.set_mode((self.W, self.H))
         pygame.mouse.set_visible(False)
@@ -567,7 +576,7 @@ class Display:
                 self.draw_tidal(t)
 
         self.draw_statusbar(v)
-        pygame.display.flip()
+        fb_write(self.screen, self.fb)
 
     def run(self):
         print("Display running. Ctrl+C to quit.")

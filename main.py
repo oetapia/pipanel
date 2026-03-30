@@ -195,14 +195,12 @@ def run():
 def _launch_volumio(P, FB):
     import threading
     from apps.volumio import socket_thread, Display
-    pygame.quit()
     threading.Thread(target=socket_thread, daemon=True).start()
     Display(P).run()
 
 
 def _launch_weather(P, FB):
     from apps.weather import WeatherApp
-    pygame.quit()
     WeatherApp(P, FB).run()
 
 
