@@ -171,10 +171,15 @@ def run():
             if switch_screen:
                 continue  # restart outer loop with new profile
 
-            if launch == 0:
-                _launch_volumio(P, FB)
-            elif launch == 1:
-                _launch_weather(P, FB)
+            if launch is not None:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                try:
+                    if launch == 0:
+                        _launch_volumio(P, FB)
+                    elif launch == 1:
+                        _launch_weather(P, FB)
+                finally:
+                    tty.setraw(fd)
 
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
