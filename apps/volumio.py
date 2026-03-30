@@ -369,8 +369,7 @@ class Display:
         os.environ["SDL_VIDEODRIVER"] = sdl["videodriver"]
         if sdl.get("fbdev"):
             os.environ["SDL_FBDEV"] = sdl["fbdev"]
-        pygame.display.quit()
-        pygame.display.init()
+        pygame.init()
         self.screen = pygame.display.set_mode((self.W, self.H))
         pygame.mouse.set_visible(False)
         self.fnt_lg  = pygame.font.SysFont(None, V["fonts"]["lg"])

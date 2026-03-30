@@ -48,6 +48,8 @@ def fb_write(surface, fb):
 
 
 def _read_key():
+    if not sys.stdin.isatty():
+        return None
     if not select.select([sys.stdin], [], [], 0)[0]:
         return None
     ch = sys.stdin.read(1)
@@ -66,9 +68,11 @@ def run():
 
     pygame.init()
 
-    fd  = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    tty.setraw(fd)
+    is_tty = sys.stdin.isatty()
+    fd  = sys.stdin.fileno() if is_tty else None
+    old = termios.tcgetattr(fd) if is_tty else None
+    if is_tty:
+        tty.setraw(fd)
 
     try:
         while True:
@@ -172,28 +176,33 @@ def run():
                 continue  # restart outer loop with new profile
 
             if launch is not None:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                if is_tty:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 try:
                     if launch == 0:
                         _launch_volumio(P, FB)
                     elif launch == 1:
                         _launch_weather(P, FB)
                 finally:
-                    tty.setraw(fd)
+                    if is_tty:
+                        tty.setraw(fd)
 
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        if is_tty:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 def _launch_volumio(P, FB):
     import threading
     from apps.volumio import socket_thread, Display
+    pygame.quit()
     threading.Thread(target=socket_thread, daemon=True).start()
     Display(P).run()
 
 
 def _launch_weather(P, FB):
     from apps.weather import WeatherApp
+    pygame.quit()
     WeatherApp(P, FB).run()
 
 
