@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import sys
 import time
 import threading
 import socketio
@@ -394,6 +393,24 @@ class Display:
                 txt = txt[:-1]
         self.screen.blit(fnt.render(txt, True, col), (x, y))
 
+    def wrap_text(self, txt, fnt, max_w):
+        """Split txt into lines that each fit within max_w pixels."""
+        words = txt.split()
+        if not words:
+            return [" "]
+        lines, current = [], ""
+        for word in words:
+            test = (current + " " + word).strip()
+            if fnt.size(test)[0] <= max_w:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = word  # single word may still exceed max_w; t() will clip it
+        if current:
+            lines.append(current)
+        return lines or [" "]
+
     # ------------------------------------------------------------------
     def draw_lyrics(self, l):
         x, w = self.COL1_X + 4, self.COL1_W - 8
@@ -416,30 +433,42 @@ class Display:
                 if ln["time_ms"] <= cur_ms:
                     cur_idx = i
 
-        start   = max(0, cur_idx - self.LYRIC_CENTRE)
-        visible = lines[start: start + self.LYRIC_VISIBLE]
+        # Build a flat list of visual rows: (orig_idx, text_fragment)
+        # Each lyric line may wrap into multiple rows using the appropriate font.
+        visual_rows = []
+        for i, ln in enumerate(lines):
+            fnt = self.fnt_lg if (i == cur_idx and is_synced) else self.fnt_lyr
+            for sub in self.wrap_text(ln["text"] or " ", fnt, w):
+                visual_rows.append((i, sub))
 
-        for i, ln in enumerate(visible):
-            abs_idx = start + i
-            is_cur  = (abs_idx == cur_idx) and is_synced
-            col     = WHITE if is_cur else GREY
-            fnt     = self.fnt_lg if is_cur else self.fnt_lyr
-            line_y  = self.LYRIC_TOP + i * self.LYRIC_LINE_H
+        # Find the first visual row belonging to the current lyric, then centre on it.
+        visual_cur = next((j for j, (i, _) in enumerate(visual_rows) if i == cur_idx), 0)
+        start      = max(0, visual_cur - self.LYRIC_CENTRE)
+        visible    = visual_rows[start: start + self.LYRIC_VISIBLE]
+
+        for row_i, (orig_idx, text) in enumerate(visible):
+            is_cur = (orig_idx == cur_idx) and is_synced
+            col    = WHITE if is_cur else GREY
+            fnt    = self.fnt_lg if is_cur else self.fnt_lyr
+            line_y = self.LYRIC_TOP + row_i * self.LYRIC_LINE_H
 
             if is_cur:
                 pygame.draw.rect(self.screen, HLBG,
                                  (self.COL1_X, line_y - 2, self.COL1_W, self.LYRIC_LINE_H + 2))
 
-            self.t(ln["text"] or " ", x, line_y, col, fnt, max_w=w)
+            self.t(text, x, line_y, col, fnt, max_w=w)
 
     # ------------------------------------------------------------------
     def draw_genius(self, g):
         x, w = self.COL2_X + 4, self.COL2_W - 8
         y = 4
+        sm_h = self.fnt_sm.get_linesize()
+        md_h = self.fnt_md.get_linesize()
 
         self.t("GENIUS", x, y, PURPLE, self.fnt_md)
-        pygame.draw.line(self.screen, GREY, (x, y + 18), (x + w, y + 18), 1)
-        y += 24
+        pygame.draw.line(self.screen, GREY, (x, y + self.fnt_md.get_height() + 2),
+                         (x + w, y + self.fnt_md.get_height() + 2), 1)
+        y += md_h + 4
 
         if g["loading"]:
             self.t("Searching...", x, y, LGREY, self.fnt_sm)
@@ -450,24 +479,24 @@ class Display:
 
         if g["year"]:
             self.t(g["year"], x, y, LGREY, self.fnt_sm)
-            y += 18
+            y += sm_h
 
         if g["samples"]:
             self.t("Samples:", x, y, YELLOW, self.fnt_sm)
-            y += 16
+            y += sm_h
             for s in g["samples"][:5]:
                 self.t(s, x, y, DIMWHITE, self.fnt_sm, max_w=w)
-                y += 14
-                if y > self.DIV_BAR - 10: break
+                y += sm_h
+                if y > self.DIV_BAR - sm_h: break
 
-        if g["sampled_in"] and y < self.DIV_BAR - 10:
-            y += 4
+        if g["sampled_in"] and y < self.DIV_BAR - sm_h:
+            y += sm_h // 3
             self.t("Sampled in:", x, y, YELLOW, self.fnt_sm)
-            y += 16
+            y += sm_h
             for s in g["sampled_in"][:5]:
                 self.t(s, x, y, DIMWHITE, self.fnt_sm, max_w=w)
-                y += 14
-                if y > self.DIV_BAR - 10: break
+                y += sm_h
+                if y > self.DIV_BAR - sm_h: break
 
         if not g["samples"] and not g["sampled_in"] and not g["loading"] and not g["error"]:
             self.t("No samples", x, y, GREY, self.fnt_sm)
@@ -476,11 +505,14 @@ class Display:
     def draw_tidal(self, t):
         x, w = self.COL2_X + 4, self.COL2_W - 8
         y = 4
+        sm_h = self.fnt_sm.get_linesize()
+        md_h = self.fnt_md.get_linesize()
 
         label = "SIMILAR" if t["mode"] == "similar" else "ALBUM"
         self.t(label, x, y, CYAN, self.fnt_md)
-        pygame.draw.line(self.screen, GREY, (x, y + 18), (x + w, y + 18), 1)
-        y += 24
+        pygame.draw.line(self.screen, GREY, (x, y + self.fnt_md.get_height() + 2),
+                         (x + w, y + self.fnt_md.get_height() + 2), 1)
+        y += md_h + 4
 
         if t["loading"]:
             self.t("Loading...", x, y, LGREY, self.fnt_sm)
@@ -490,8 +522,8 @@ class Display:
             return
         for track in t["tracks"]:
             self.t(track["label"], x, y, DIMWHITE, self.fnt_sm, max_w=w)
-            y += 14
-            if y > self.DIV_BAR - 10:
+            y += sm_h
+            if y > self.DIV_BAR - sm_h:
                 break
 
     # ------------------------------------------------------------------
