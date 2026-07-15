@@ -2,3 +2,4 @@ pygame
 python-socketio[client]
 requests
 numpy
+websockets

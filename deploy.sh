@@ -23,7 +23,7 @@ echo "Setting up Python venv..."
 PIPANEL_DIR="/home/pi/pipanel"
 sudo -u pi python3 -m venv --system-site-packages "$PIPANEL_DIR/.venv"
 sudo -u pi "$PIPANEL_DIR/.venv/bin/python3" -m ensurepip --upgrade
-sudo -u pi "$PIPANEL_DIR/.venv/bin/python3" -m pip install python-socketio[client] requests
+sudo -u pi "$PIPANEL_DIR/.venv/bin/python3" -m pip install python-socketio[client] requests websockets
 
 echo "Reloading systemd daemon..."
 systemctl daemon-reload

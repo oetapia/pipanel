@@ -189,6 +189,15 @@ def run():
                         _launch_volumio(P, FB)
                     elif launch == 2:
                         _launch_weather(P, FB)
+                except KeyboardInterrupt:
+                    raise
+                except BaseException:
+                    # One app failing (bad import, missing dep, crash) must not
+                    # take down the whole panel — show it and return to the menu.
+                    import traceback
+                    traceback.print_exc()
+                    _show_error(P, FB, f"{APPS[launch]['name']} failed",
+                                traceback.format_exc().strip().splitlines()[-1])
                 finally:
                     if is_tty:
                         tty.setraw(fd)
@@ -196,6 +205,35 @@ def run():
     finally:
         if is_tty:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _show_error(P, FB, title, detail):
+    """Render an app-launch failure to the panel, then pause so it's readable."""
+    W, H = P["screen"]["w"], P["screen"]["h"]
+    M = P["main"]
+    try:
+        pygame.display.quit()
+        pygame.display.init()
+        screen = pygame.display.set_mode((W, H))
+        pygame.mouse.set_visible(False)
+        fnt_name = pygame.font.SysFont(None, M["fonts"]["name"])
+        fnt_desc = pygame.font.SysFont(None, M["fonts"]["desc"])
+
+        screen.fill(BLACK)
+        screen.blit(fnt_name.render(title, True, (220, 60, 60)),
+                    (M["title_x"], M["title_y"]))
+        margin = M["title_x"]
+        text = detail
+        while text and fnt_desc.size(text)[0] > W - 2 * margin:
+            text = text[:-1]
+        screen.blit(fnt_desc.render(text, True, WHITE),
+                    (margin, M["title_y"] + M["fonts"]["name"]))
+        screen.blit(fnt_desc.render("Returning to menu...", True, GREY),
+                    (margin, H - M["hint_text_offset"]))
+        fb_write(screen, FB)
+    except Exception:
+        pass
+    time.sleep(4)
 
 
 def _launch_controller(P, FB):
