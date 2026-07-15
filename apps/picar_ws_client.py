@@ -46,10 +46,10 @@ from typing import Optional, Callable, Dict, Any
 
 try:
     import websockets
-except ImportError:
-    print("ERROR: websockets library required. Install with:")
-    print("  pip install websockets")
-    sys.exit(1)
+except ImportError as e:
+    raise ImportError(
+        "websockets library required — run: pip install websockets"
+    ) from e
 
 # Import config for default IP
 try:
