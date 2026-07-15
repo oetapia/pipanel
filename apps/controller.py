@@ -40,9 +40,11 @@ except (ImportError, AttributeError):
     PICAR_IP = "192.168.178.59"
 
 # Works both as a package submodule (apps.controller) and as a standalone script.
-try:
+# Pick the import by load context so an error *inside* picar_ws_client (e.g. a
+# missing dependency) propagates with its real message instead of being masked.
+if __package__:
     from .picar_ws_client import PicarWsClientSync
-except ImportError:
+else:
     from picar_ws_client import PicarWsClientSync
 
 
