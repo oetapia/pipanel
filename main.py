@@ -26,9 +26,13 @@ os.environ["SDL_VIDEODRIVER"] = "offscreen"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
 
 APPS = [
+    {"name": "CONTROLLER",   "description": "Picar Xbox control"},
     {"name": "MUSIC PLAYER", "description": "Volumio controls"},
     {"name": "WEATHER",      "description": "City weather info"},
 ]
+
+# App auto-launched when the countdown expires with no selection.
+DEFAULT_APP = 0  # CONTROLLER
 
 BLACK  = (0,   0,   0)
 WHITE  = (255, 255, 255)
@@ -163,7 +167,7 @@ def run():
                         launch  = selected
                         running = False
                 elif time.monotonic() >= deadline:
-                    launch  = 0
+                    launch  = DEFAULT_APP
                     running = False
                 else:
                     remaining = max(0, int(deadline - time.monotonic()))
@@ -180,8 +184,10 @@ def run():
                     termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 try:
                     if launch == 0:
-                        _launch_volumio(P, FB)
+                        _launch_controller(P, FB)
                     elif launch == 1:
+                        _launch_volumio(P, FB)
+                    elif launch == 2:
                         _launch_weather(P, FB)
                 finally:
                     if is_tty:
@@ -190,6 +196,11 @@ def run():
     finally:
         if is_tty:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _launch_controller(P, FB):
+    from apps.controller import ControllerApp
+    ControllerApp(P).run()
 
 
 def _launch_volumio(P, FB):
