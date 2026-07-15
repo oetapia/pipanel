@@ -3,22 +3,10 @@ import json
 import os
 import time
 import threading
+import numpy as np
 import requests
 import pygame
 
-def _load_profile():
-    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(_root, "profiles.json")) as f:
-        profiles = json.load(f)
-    return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
-
-_P  = _load_profile()
-_W  = _P["weather"]
-_sdl = _P["sdl"]
-
-os.environ.setdefault("SDL_VIDEODRIVER", _sdl["videodriver"])
-if _sdl.get("fbdev"):
-    os.environ.setdefault("SDL_FBDEV", _sdl["fbdev"])
 
 # Load .env from project root (one level above this file)
 def _load_env():
@@ -34,12 +22,12 @@ def _load_env():
     except FileNotFoundError:
         pass
 
+
 _load_env()
 
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY", "")
 BASE_URL = "http://api.weatherapi.com/v1/current.json"
 
-SCREEN_W, SCREEN_H = _P["screen"]["w"], _P["screen"]["h"]
 CITIES = ["Berlin", "Quito", "Seoul", "Madrid", "Raleigh", "NYC", "Bali"]
 UPDATE_INTERVAL = 300  # seconds
 
@@ -53,17 +41,33 @@ GREY   = (80,  80,  80)
 LGREY  = (150, 150, 150)
 
 
+def fb_write(surface, fb):
+    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
+    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
+    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
+    b =  raw[:, :, 2].astype(np.uint16) >> 3
+    with open(fb, "wb") as f:
+        f.write((r | g | b).astype(np.uint16).tobytes())
+
+
 class WeatherApp:
-    def __init__(self):
+    def __init__(self, P, FB=None):
+        self.W = P["weather"]
+        sdl = P["sdl"]
+
+        self.screen_w = P["screen"]["w"]
+        self.screen_h = P["screen"]["h"]
+        self.fb = FB or sdl["fbdev"]
+
+        os.environ["SDL_VIDEODRIVER"] = "offscreen"
         pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-        pygame.display.set_caption("Weather")
+        self.screen = pygame.display.set_mode((self.screen_w, self.screen_h))
         pygame.mouse.set_visible(False)
 
-        self.fnt_xl = pygame.font.SysFont(None, _W["fonts"]["xl"])
-        self.fnt_lg = pygame.font.SysFont(None, _W["fonts"]["lg"])
-        self.fnt_md = pygame.font.SysFont(None, _W["fonts"]["md"])
-        self.fnt_sm = pygame.font.SysFont(None, _W["fonts"]["sm"])
+        self.fnt_xl = pygame.font.SysFont(None, self.W["fonts"]["xl"])
+        self.fnt_lg = pygame.font.SysFont(None, self.W["fonts"]["lg"])
+        self.fnt_md = pygame.font.SysFont(None, self.W["fonts"]["md"])
+        self.fnt_sm = pygame.font.SysFont(None, self.W["fonts"]["sm"])
 
         self.cities     = CITIES
         self.city_index = 0
@@ -128,6 +132,8 @@ class WeatherApp:
         self.screen.blit(fnt.render(txt, True, col), (x, y))
 
     def _draw(self):
+        W = self.W
+        SCREEN_W, SCREEN_H = self.screen_w, self.screen_h
         self.screen.fill(BLACK)
 
         with self._lock:
@@ -141,52 +147,52 @@ class WeatherApp:
         if icon_bytes and icon is None:
             try:
                 surf = pygame.image.load(io.BytesIO(icon_bytes))
-                icon = pygame.transform.scale(surf, (_W["icon_size"], _W["icon_size"]))
+                icon = pygame.transform.scale(surf, (W["icon_size"], W["icon_size"]))
                 with self._lock:
                     self._icon = icon
             except Exception:
                 pass
 
         # Header
-        self._t("WEATHER", _W["header_x"], _W["header_y"], YELLOW, self.fnt_lg)
-        self._t(self.city.upper(), _W["city_x"], _W["city_y"], WHITE, self.fnt_lg)
-        pygame.draw.line(self.screen, YELLOW, (0, _W["header_line_y"]), (SCREEN_W, _W["header_line_y"]), 1)
+        self._t("WEATHER", W["header_x"], W["header_y"], YELLOW, self.fnt_lg)
+        self._t(self.city.upper(), W["city_x"], W["city_y"], WHITE, self.fnt_lg)
+        pygame.draw.line(self.screen, YELLOW, (0, W["header_line_y"]), (SCREEN_W, W["header_line_y"]), 1)
 
         if loading and not data:
-            self._t("Loading...", _W["header_x"], _W["temp_y"], LGREY)
+            self._t("Loading...", W["header_x"], W["temp_y"], LGREY)
         elif error and not data:
-            self._t(error, _W["header_x"], _W["temp_y"], RED, self.fnt_sm, max_w=SCREEN_W - _W["header_x"] * 2)
+            self._t(error, W["header_x"], W["temp_y"], RED, self.fnt_sm, max_w=SCREEN_W - W["header_x"] * 2)
         elif data:
             cur = data["current"]
             loc = data["location"]
 
             # Big temperature
-            self._t(f"{cur['temp_c']}°C", _W["temp_x"], _W["temp_y"], GREEN, self.fnt_xl)
+            self._t(f"{cur['temp_c']}°C", W["temp_x"], W["temp_y"], GREEN, self.fnt_xl)
 
             # Condition
-            self._t(cur["condition"]["text"], _W["condition_x"], _W["condition_y"], CYAN, self.fnt_md, max_w=_W["condition_max_w"])
+            self._t(cur["condition"]["text"], W["condition_x"], W["condition_y"], CYAN, self.fnt_md, max_w=W["condition_max_w"])
 
             # Details
-            y = _W["details_y"]
+            y = W["details_y"]
             for label, val in [
                 ("Feels like", f"{cur['feelslike_c']}°C"),
                 ("Wind",       f"{cur['wind_kph']} km/h"),
                 ("Humidity",   f"{cur['humidity']}%"),
                 ("Local time", loc["localtime"].split()[-1]),
             ]:
-                self._t(label, _W["details_label_x"], y, LGREY, self.fnt_sm)
-                self._t(val,   _W["details_val_x"],   y, WHITE, self.fnt_sm)
-                y += _W["detail_step"]
+                self._t(label, W["details_label_x"], y, LGREY, self.fnt_sm)
+                self._t(val,   W["details_val_x"],   y, WHITE, self.fnt_sm)
+                y += W["detail_step"]
 
             # Icon (right side)
             if icon:
-                self.screen.blit(icon, (SCREEN_W - _W["icon_x_from_right"], _W["icon_y"]))
+                self.screen.blit(icon, (SCREEN_W - W["icon_x_from_right"], W["icon_y"]))
 
         # Footer
-        pygame.draw.line(self.screen, GREY, (0, SCREEN_H - _W["footer_line_offset"]), (SCREEN_W, SCREEN_H - _W["footer_line_offset"]), 1)
-        self._t("↑↓ City   R Refresh   ESC Back", _W["header_x"], SCREEN_H - _W["footer_text_offset"], CYAN, self.fnt_sm)
+        pygame.draw.line(self.screen, GREY, (0, SCREEN_H - W["footer_line_offset"]), (SCREEN_W, SCREEN_H - W["footer_line_offset"]), 1)
+        self._t("↑↓ City   R Refresh   ESC Back", W["header_x"], SCREEN_H - W["footer_text_offset"], CYAN, self.fnt_sm)
 
-        pygame.display.flip()
+        fb_write(self.screen, self.fb)
 
     # ------------------------------------------------------------------
     def run(self):
@@ -196,7 +202,7 @@ class WeatherApp:
                 if event.type == pygame.QUIT:
                     return
                 elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+                    if event.key in (pygame.K_ESCAPE, pygame.K_q):
                         return
                     elif event.key in (pygame.K_DOWN, pygame.K_RIGHT):
                         self.city_index = (self.city_index + 1) % len(self.cities)
@@ -217,8 +223,14 @@ class WeatherApp:
 
 
 if __name__ == "__main__":
+    def _load_profile():
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(_root, "profiles.json")) as f:
+            profiles = json.load(f)
+        return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
+
     try:
-        WeatherApp().run()
+        WeatherApp(_load_profile()).run()
     except KeyboardInterrupt:
         pass
     finally:
