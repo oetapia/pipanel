@@ -2,19 +2,28 @@
 Controller input demo — shows live which key is pressed and from which
 controller, rendered to the pipanel framebuffer.
 
-A single USB device merges two controllers. Button/axis enumeration order is
-driver-dependent: the indices differ between macOS (IOKit) and the Raspberry
-Pi (Linux evdev), which is the deployment target here — so CONTROLLERS below
-holds the Pi's ordering. Press R to toggle a RAW view that shows the true
-button/axis/hat indices with no mapping applied; use it to confirm the numbers
-on the Pi and update CONTROLLERS if any input is mislabeled.
+Two controllers share one USB adapter. How they enumerate is driver-dependent:
+  * macOS (IOKit):   one merged joystick device with interleaved/blocked
+                     indices — what controllers2.py assumed.
+  * Raspberry Pi:    the adapter usually splits into TWO joystick devices
+                     (Joystick(0), Joystick(1)), each with its own indices
+                     starting at 0. controllers2.py only opened Joystick(0),
+                     so it never saw the second controller on the Pi.
+
+This app is device-count aware:
+  * 2+ devices -> device 0 = Controller 1, device 1 = Controller 2, each using
+                  the per-device LAYOUT below.
+  * 1 device   -> single merged device; Controller 2 is offset into the upper
+                  block of indices.
+
+Press R to toggle a RAW view showing every device's true button/axis/hat
+indices with no mapping applied.
 
 Runs two ways:
   * As a pipanel app  -> ControllerDemoApp(P).run()  (renders to the panel)
   * Standalone        -> python apps/controller_demo.py  (uses 35panel profile)
 
-Press any button / move a stick / use the D-pad to see it on screen.
-R toggles raw/mapped view.  ESC or Q returns to the menu.
+Press any input to see it.  R toggles raw/mapped.  ESC or Q returns to menu.
 """
 
 import json
@@ -25,32 +34,24 @@ import numpy as np
 import pygame
 
 
-# One physical USB device merges two controllers with NO overlapping inputs.
-# On the Raspberry Pi (Linux evdev) they map to contiguous blocks of raw
-# indices, NOT the interleaved (odd/even) layout controllers2.py used for macOS:
-#   Controller 1 -> buttons 0-11, axes 0-3, hat 0
-#   Controller 2 -> buttons 12-23, axes 4-7, hat 1
-# Button/axis names are in device order (Y,B,A,X,...  LX,LY,RX,RY).
-CONTROLLERS = {
-    "Controller 1": {
-        "buttons": {
-            0: "Y", 1: "B", 2: "A", 3: "X",
-            4: "L1", 5: "R1", 6: "L2", 7: "R2",
-            8: "SELECT", 9: "START", 10: "L3", 11: "R3",
-        },
-        "axes": {"LX": 0, "LY": 1, "RX": 2, "RY": 3},
-        "hat": 0,
+PLAYERS = ["Controller 1", "Controller 2"]
+
+# Per-controller input layout, in device order (confirmed on the Pi for
+# Controller 1). Applied to each device, with offsets when a single merged
+# device carries both controllers.
+LAYOUT = {
+    "buttons": {
+        0: "Y", 1: "B", 2: "A", 3: "X",
+        4: "L1", 5: "R1", 6: "L2", 7: "R2",
+        8: "SELECT", 9: "START", 10: "L3", 11: "R3",
     },
-    "Controller 2": {
-        "buttons": {
-            12: "Y", 13: "B", 14: "A", 15: "X",
-            16: "L1", 17: "R1", 18: "L2", 19: "R2",
-            20: "SELECT", 21: "START", 22: "L3", 23: "R3",
-        },
-        "axes": {"LX": 4, "LY": 5, "RX": 6, "RY": 7},
-        "hat": 1,
-    },
+    "axes": {"LX": 0, "LY": 1, "RX": 2, "RY": 3},
+    "hat": 0,
 }
+
+# Offsets used only when both controllers live on ONE merged device.
+MERGED_BUTTON_STRIDE = 12
+MERGED_AXIS_STRIDE   = 4
 
 HAT_DIRECTIONS = {
     (0, 1): "UP", (0, -1): "DOWN", (-1, 0): "LEFT", (1, 0): "RIGHT",
@@ -118,10 +119,11 @@ class ControllerDemoApp:
         self.foot_txt  = M["hint_text_offset"]
         self.row_h     = int(self.fnt_desc.get_linesize() * 1.15)
 
-        self.joy = None
+        self.joys     = []   # opened pygame joystick objects
+        self.bindings = []   # list of {name, joy, btn_off, axis_off, hat}
         self.raw_mode = False  # toggled with R; shows unmapped indices
 
-        # Per-index previous state, matching controllers2.py's keying.
+        # Mapped-mode change tracking, keyed by (player, raw_index).
         self._last_buttons = {}
         self._last_hats    = {}
         self._last_axes    = {}
@@ -129,7 +131,7 @@ class ControllerDemoApp:
         self._last_event      = None  # (player, text)
         self._last_event_time = 0.0
 
-        # Raw-mode change tracking (keyed by raw index, no mapping).
+        # Raw-mode change tracking, keyed by (device_index, raw_index).
         self._raw_last_buttons = {}
         self._raw_last_axes    = {}
         self._raw_last_hats    = {}
@@ -144,18 +146,57 @@ class ControllerDemoApp:
         self._raw_last_hats.clear()
 
     # ------------------------------------------------------------------
-    def _ensure_joystick(self):
-        if self.joy is not None:
-            return True
+    def _build_bindings(self):
+        """Assign controllers to devices based on how many are connected."""
+        self.bindings = []
+        if not self.joys:
+            return
+        if len(self.joys) >= 2:
+            # Separate device per controller (the Raspberry Pi case).
+            for idx, name in enumerate(PLAYERS):
+                if idx < len(self.joys):
+                    self.bindings.append({
+                        "name": name, "joy": self.joys[idx],
+                        "btn_off": 0, "axis_off": 0, "hat": LAYOUT["hat"],
+                    })
+        else:
+            # One merged device carries both controllers in stacked blocks.
+            j = self.joys[0]
+            self.bindings.append({
+                "name": PLAYERS[0], "joy": j,
+                "btn_off": 0, "axis_off": 0, "hat": 0,
+            })
+            self.bindings.append({
+                "name": PLAYERS[1], "joy": j,
+                "btn_off": MERGED_BUTTON_STRIDE,
+                "axis_off": MERGED_AXIS_STRIDE, "hat": 1,
+            })
+
+    def _ensure_joysticks(self):
+        """Open all connected joysticks; rebuild bindings on count change."""
         pygame.event.pump()
-        if pygame.joystick.get_count() == 0:
+        count = pygame.joystick.get_count()
+        if count == 0:
+            if self.joys:
+                self.joys = []
+                self.bindings = []
+                self._reset_state()
             return False
-        try:
-            self.joy = pygame.joystick.Joystick(0)
-            self.joy.init()
-        except pygame.error:
-            self.joy = None
+        if len(self.joys) == count and self.bindings:
+            return True
+        # (Re)initialise every device.
+        self.joys = []
+        for i in range(count):
+            try:
+                j = pygame.joystick.Joystick(i)
+                j.init()
+                self.joys.append(j)
+            except pygame.error:
+                pass
+        if not self.joys:
             return False
+        self._build_bindings()
+        self._reset_state()
         return True
 
     def _record(self, player, text):
@@ -163,97 +204,111 @@ class ControllerDemoApp:
         self._last_event_time = time.monotonic()
 
     def _poll(self):
-        """Read the device, emit change events, return live-held state."""
+        """Read all bound devices, emit change events, return held state."""
         pygame.event.pump()
-        held = {p: {"buttons": [], "axes": [], "dpad": None} for p in CONTROLLERS}
+        held = {p: {"buttons": [], "axes": [], "dpad": None} for p in PLAYERS}
 
-        num_buttons = self.joy.get_numbuttons()
-        num_axes    = self.joy.get_numaxes()
-        num_hats    = self.joy.get_numhats()
+        for b in self.bindings:
+            player = b["name"]
+            joy    = b["joy"]
+            nb = joy.get_numbuttons()
+            na = joy.get_numaxes()
+            nh = joy.get_numhats()
 
-        for player, cfg in CONTROLLERS.items():
-            # Buttons (edge-triggered events + live held set)
-            for button, name in cfg["buttons"].items():
-                if button >= num_buttons:
+            # Buttons
+            for local, name in LAYOUT["buttons"].items():
+                raw = local + b["btn_off"]
+                if raw >= nb:
                     continue
-                state = self.joy.get_button(button)
+                state = joy.get_button(raw)
+                key = (player, raw)
                 if state:
                     held[player]["buttons"].append(name)
-                if state != self._last_buttons.get(button, 0):
+                if state != self._last_buttons.get(key, 0):
                     if state:
                         self._record(player, name)
-                    self._last_buttons[button] = state
+                    self._last_buttons[key] = state
 
             # D-pad / hat
-            hat_id = cfg["hat"]
-            if hat_id < num_hats:
-                hat = self.joy.get_hat(hat_id)
+            hat_id = b["hat"]
+            if hat_id < nh:
+                hat = joy.get_hat(hat_id)
+                key = (player, hat_id)
                 if hat != (0, 0):
                     held[player]["dpad"] = HAT_DIRECTIONS.get(hat, str(hat))
-                if hat != self._last_hats.get(hat_id, (0, 0)):
+                if hat != self._last_hats.get(key, (0, 0)):
                     if hat != (0, 0):
                         self._record(player, f"D-PAD {HAT_DIRECTIONS.get(hat, hat)}")
-                    self._last_hats[hat_id] = hat
+                    self._last_hats[key] = hat
 
             # Axes
-            for name, axis in cfg["axes"].items():
-                if axis >= num_axes:
+            for name, local in LAYOUT["axes"].items():
+                raw = local + b["axis_off"]
+                if raw >= na:
                     continue
-                value = _axis_filter(self.joy.get_axis(axis))
+                value = _axis_filter(joy.get_axis(raw))
+                key = (player, raw)
                 if value != 0:
                     held[player]["axes"].append((name, value))
-                if value != self._last_axes.get(axis, 0):
+                if value != self._last_axes.get(key, 0):
                     if value != 0:
                         self._record(player, f"{name} {value:+.2f}")
-                    self._last_axes[axis] = value
+                    self._last_axes[key] = value
 
         return held
 
     def _poll_raw(self):
-        """Read every input by raw index, no mapping. Returns held state and
-        records the latest raw change into self._raw_last_event."""
+        """Read every device by raw index, no mapping. Returns per-device
+        state and records the latest raw change into self._raw_last_event."""
         pygame.event.pump()
-        num_buttons = self.joy.get_numbuttons()
-        num_axes    = self.joy.get_numaxes()
-        num_hats    = self.joy.get_numhats()
+        devices = []
+        for di, joy in enumerate(self.joys):
+            nb = joy.get_numbuttons()
+            na = joy.get_numaxes()
+            nh = joy.get_numhats()
 
-        buttons = []
-        for i in range(num_buttons):
-            s = self.joy.get_button(i)
-            if s:
-                buttons.append(i)
-            if s != self._raw_last_buttons.get(i, 0):
+            buttons = []
+            for i in range(nb):
+                s = joy.get_button(i)
+                key = (di, i)
                 if s:
-                    self._raw_last_event = f"button {i}"
-                self._raw_last_buttons[i] = s
+                    buttons.append(i)
+                if s != self._raw_last_buttons.get(key, 0):
+                    if s:
+                        self._raw_last_event = f"dev{di} button {i}"
+                    self._raw_last_buttons[key] = s
 
-        axes = []
-        for i in range(num_axes):
-            v = _axis_filter(self.joy.get_axis(i))
-            if v != 0:
-                axes.append((i, v))
-            if v != self._raw_last_axes.get(i, 0):
+            axes = []
+            for i in range(na):
+                v = _axis_filter(joy.get_axis(i))
+                key = (di, i)
                 if v != 0:
-                    self._raw_last_event = f"axis {i} {v:+.2f}"
-                self._raw_last_axes[i] = v
+                    axes.append((i, v))
+                if v != self._raw_last_axes.get(key, 0):
+                    if v != 0:
+                        self._raw_last_event = f"dev{di} axis {i} {v:+.2f}"
+                    self._raw_last_axes[key] = v
 
-        hats = []
-        for i in range(num_hats):
-            h = self.joy.get_hat(i)
-            if h != (0, 0):
-                hats.append((i, h))
-            if h != self._raw_last_hats.get(i, (0, 0)):
+            hats = []
+            for i in range(nh):
+                h = joy.get_hat(i)
+                key = (di, i)
                 if h != (0, 0):
-                    self._raw_last_event = f"hat {i} {h}"
-                self._raw_last_hats[i] = h
+                    hats.append((i, h))
+                if h != self._raw_last_hats.get(key, (0, 0)):
+                    if h != (0, 0):
+                        self._raw_last_event = f"dev{di} hat {i} {h}"
+                    self._raw_last_hats[key] = h
 
-        return {
-            "name": self.joy.get_name(),
-            "counts": (num_buttons, num_axes, num_hats),
-            "buttons": buttons,
-            "axes": axes,
-            "hats": hats,
-        }
+            devices.append({
+                "idx": di,
+                "name": joy.get_name(),
+                "counts": (nb, na, nh),
+                "buttons": buttons,
+                "axes": axes,
+                "hats": hats,
+            })
+        return devices
 
     # ------------------------------------------------------------------
     def _t(self, txt, x, y, col, fnt=None, max_w=None):
@@ -302,7 +357,7 @@ class ControllerDemoApp:
         # Two columns showing what each controller is holding right now.
         col_top = y + self.row_h * 3
         col_w   = (self.W - 2 * m) // 2
-        for i, (player, cfg) in enumerate(CONTROLLERS.items()):
+        for i, player in enumerate(PLAYERS):
             cx = m + i * col_w
             accent = PLAYER_COLORS.get(player, WHITE)
             self._t(player, cx, col_top, accent, self.fnt_name, max_w=col_w - 8)
@@ -331,7 +386,7 @@ class ControllerDemoApp:
 
         fb_write(S, self.fb)
 
-    def _draw_raw(self, raw):
+    def _draw_raw(self, devices):
         S = self.screen
         m = self.margin
         S.fill(BLACK)
@@ -340,39 +395,30 @@ class ControllerDemoApp:
         pygame.draw.line(S, YELLOW, (m, self.divider_y),
                          (self.W - m, self.divider_y), 1)
 
-        nb, na, nh = raw["counts"]
-        y = self.divider_y + int(self.row_h * 0.4)
-        self._t(f"{raw['name']}", m, y, LGREY, self.fnt_hint,
-                max_w=self.W - 2 * m)
-        y += self.row_h
-        self._t(f"{nb} buttons   {na} axes   {nh} hats",
-                m, y, GREY, self.fnt_hint, max_w=self.W - 2 * m)
+        step = int(self.fnt_hint.get_linesize() * 1.05)
+        y = self.divider_y + 6
 
-        # Latest raw change, big.
-        y += int(self.row_h * 1.3)
-        self._t("Last:", m, y, LGREY, self.fnt_desc)
-        self._t(self._raw_last_event or "—",
-                m + self.fnt_desc.size("Last: ")[0], y,
-                WHITE, self.fnt_desc, max_w=self.W - 2 * m)
+        # Latest raw change, prominent.
+        self._t("Last: " + (self._raw_last_event or "—"),
+                m, y, WHITE, self.fnt_desc, max_w=self.W - 2 * m)
+        y += int(self.row_h * 1.1)
 
-        # Live held raw inputs.
-        y += self.row_h
-        btns = " ".join(str(i) for i in raw["buttons"]) or "—"
-        self._t("BTN:", m, y, LGREY, self.fnt_desc)
-        self._t(btns, m + self.fnt_desc.size("BTN: ")[0], y, GREEN,
-                self.fnt_desc, max_w=self.W - 2 * m)
-
-        y += self.row_h
-        axes = "  ".join(f"{i}:{v:+.2f}" for i, v in raw["axes"]) or "—"
-        self._t("AXIS:", m, y, LGREY, self.fnt_desc)
-        self._t(axes, m + self.fnt_desc.size("AXIS: ")[0], y, GREEN,
-                self.fnt_desc, max_w=self.W - 2 * m)
-
-        y += self.row_h
-        hats = "  ".join(f"{i}:{h}" for i, h in raw["hats"]) or "—"
-        self._t("HAT:", m, y, LGREY, self.fnt_desc)
-        self._t(hats, m + self.fnt_desc.size("HAT: ")[0], y, GREEN,
-                self.fnt_desc, max_w=self.W - 2 * m)
+        if not devices:
+            self._t("No devices", m, y, LGREY, self.fnt_hint)
+        for d in devices:
+            nb, na, nh = d["counts"]
+            self._t(f"dev{d['idx']} {d['name']}  ({nb}b {na}a {nh}h)",
+                    m, y, CYAN, self.fnt_hint, max_w=self.W - 2 * m)
+            y += step
+            btns = " ".join(str(i) for i in d["buttons"]) or "—"
+            self._t(f"  BTN {btns}", m, y, GREEN, self.fnt_hint,
+                    max_w=self.W - 2 * m)
+            y += step
+            axes = "  ".join(f"{i}:{v:+.2f}" for i, v in d["axes"]) or "—"
+            hats = "  ".join(f"{i}:{h}" for i, h in d["hats"]) or "—"
+            self._t(f"  AX {axes}  HAT {hats}", m, y, GREEN, self.fnt_hint,
+                    max_w=self.W - 2 * m)
+            y += step + 2
 
         pygame.draw.line(S, GREY, (0, self.H - self.foot_line),
                          (self.W, self.H - self.foot_line), 1)
@@ -396,7 +442,7 @@ class ControllerDemoApp:
                         if event.key == pygame.K_r:
                             self.raw_mode = not self.raw_mode
 
-                if not self._ensure_joystick():
+                if not self._ensure_joysticks():
                     self._draw_waiting()
                     clock.tick(10)
                     continue
@@ -408,7 +454,8 @@ class ControllerDemoApp:
                     else:
                         self._draw(self._poll())
                 except pygame.error:
-                    self.joy = None
+                    self.joys = []
+                    self.bindings = []
                     self._reset_state()
                     self._draw_waiting()
                     clock.tick(10)
