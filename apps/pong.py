@@ -202,7 +202,9 @@ class PongApp:
         if self.serving or self.winner is not None:
             return
 
-        # Ball
+        # Ball (remember previous X for swept collision so a fast ball can't
+        # tunnel through the thin paddle in a single frame).
+        prev_x = self.ball_x
         self.ball_x += self.ball_vx * dt
         self.ball_y += self.ball_vy * dt
 
@@ -214,10 +216,15 @@ class PongApp:
             self.ball_y = self.H - self.ball_size
             self.ball_vy = -abs(self.ball_vy)
 
-        # Paddle collisions
-        self._bounce_paddle(self.p1_x + self.paddle_w, self.p1_y,
-                            moving_left=False)
-        self._bounce_paddle(self.p2_x, self.p2_y, moving_left=True)
+        # Paddle collisions. Left paddle: ball moving left, its collision face
+        # is the paddle's right edge. Right paddle: ball moving right, face is
+        # the paddle's left edge.
+        if self.ball_vx < 0:
+            self._bounce_paddle(self.p1_x + self.paddle_w, self.p1_y,
+                                prev_x, is_left=True)
+        elif self.ball_vx > 0:
+            self._bounce_paddle(self.p2_x, self.p2_y,
+                                prev_x, is_left=False)
 
         # Scoring
         if self.ball_x + self.ball_size < 0:
@@ -225,33 +232,46 @@ class PongApp:
         elif self.ball_x > self.W:
             self._point(scorer=0)
 
-    def _bounce_paddle(self, face_x, paddle_y, moving_left):
-        bx1, bx2 = self.ball_x, self.ball_x + self.ball_size
-        by1, by2 = self.ball_y, self.ball_y + self.ball_size
+    def _bounce_paddle(self, face_x, paddle_y, prev_x, is_left):
+        size = self.ball_size
         py1, py2 = paddle_y, paddle_y + self.paddle_h
 
-        if moving_left:
-            hit = self.ball_vx < 0 and bx1 <= face_x and bx2 >= face_x
+        # Swept crossing test along X: did the ball's leading edge pass the
+        # paddle face this frame (accounts for a fast ball skipping over it)?
+        if is_left:
+            # Leading edge is the ball's left side, moving toward smaller x.
+            prev_edge = prev_x
+            new_edge  = self.ball_x
+            crossed = prev_edge >= face_x and new_edge <= face_x
         else:
-            hit = self.ball_vx > 0 and bx2 >= face_x and bx1 <= face_x
-        if not hit or by2 < py1 or by1 > py2:
+            # Leading edge is the ball's right side, moving toward larger x.
+            prev_edge = prev_x + size
+            new_edge  = self.ball_x + size
+            crossed = prev_edge <= face_x and new_edge >= face_x
+        if not crossed:
+            return
+
+        # Vertical overlap check at the ball's current Y.
+        by1, by2 = self.ball_y, self.ball_y + size
+        if by2 < py1 or by1 > py2:
             return
 
         # Reflect and add angle based on where it struck the paddle.
-        rel = ((self.ball_y + self.ball_size / 2) - (paddle_y + self.paddle_h / 2))
+        rel = ((self.ball_y + size / 2) - (paddle_y + self.paddle_h / 2))
         rel /= (self.paddle_h / 2)  # -1..1
+        rel = max(-1.0, min(1.0, rel))
         speed = min(self.ball_speed_max,
                     (self.ball_vx ** 2 + self.ball_vy ** 2) ** 0.5
                     * self.ball_speedup)
-        direction = 1 if moving_left is False else -1
+        direction = 1 if is_left else -1  # left paddle sends ball right
         angle = rel * (math.pi / 3.5)  # up to ~51°
         self.ball_vx = direction * speed * math.cos(angle)
         self.ball_vy = speed * math.sin(angle)
-        # Nudge out of the paddle so we don't re-collide next frame.
-        if moving_left:
-            self.ball_x = face_x - self.ball_size - 1
-        else:
+        # Place the ball just off the paddle face so we don't re-collide.
+        if is_left:
             self.ball_x = face_x + 1
+        else:
+            self.ball_x = face_x - size - 1
 
     def _point(self, scorer):
         self.score[scorer] += 1
