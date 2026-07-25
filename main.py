@@ -26,6 +26,7 @@ os.environ["SDL_VIDEODRIVER"] = "offscreen"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
 
 APPS = [
+    {"name": "PONG",            "description": "Two-player Pong"},
     {"name": "CONTROLLER DEMO", "description": "Live input viewer"},
     {"name": "CONTROLLER",      "description": "Picar Xbox control"},
     {"name": "MUSIC PLAYER",    "description": "Volumio controls"},
@@ -33,7 +34,7 @@ APPS = [
 ]
 
 # App auto-launched when the countdown expires with no selection.
-DEFAULT_APP = 0  # CONTROLLER DEMO
+DEFAULT_APP = 0  # PONG
 
 BLACK  = (0,   0,   0)
 WHITE  = (255, 255, 255)
@@ -185,12 +186,14 @@ def run():
                     termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 try:
                     if launch == 0:
-                        _launch_controller_demo(P, FB)
+                        _launch_pong(P, FB)
                     elif launch == 1:
-                        _launch_controller(P, FB)
+                        _launch_controller_demo(P, FB)
                     elif launch == 2:
-                        _launch_volumio(P, FB)
+                        _launch_controller(P, FB)
                     elif launch == 3:
+                        _launch_volumio(P, FB)
+                    elif launch == 4:
                         _launch_weather(P, FB)
                 except KeyboardInterrupt:
                     raise
@@ -237,6 +240,11 @@ def _show_error(P, FB, title, detail):
     except Exception:
         pass
     time.sleep(4)
+
+
+def _launch_pong(P, FB):
+    from apps.pong import PongApp
+    PongApp(P).run()
 
 
 def _launch_controller_demo(P, FB):
