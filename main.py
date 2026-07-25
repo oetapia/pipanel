@@ -26,13 +26,14 @@ os.environ["SDL_VIDEODRIVER"] = "offscreen"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
 
 APPS = [
-    {"name": "CONTROLLER",   "description": "Picar Xbox control"},
-    {"name": "MUSIC PLAYER", "description": "Volumio controls"},
-    {"name": "WEATHER",      "description": "City weather info"},
+    {"name": "CONTROLLER DEMO", "description": "Live input viewer"},
+    {"name": "CONTROLLER",      "description": "Picar Xbox control"},
+    {"name": "MUSIC PLAYER",    "description": "Volumio controls"},
+    {"name": "WEATHER",         "description": "City weather info"},
 ]
 
 # App auto-launched when the countdown expires with no selection.
-DEFAULT_APP = 0  # CONTROLLER
+DEFAULT_APP = 0  # CONTROLLER DEMO
 
 BLACK  = (0,   0,   0)
 WHITE  = (255, 255, 255)
@@ -184,10 +185,12 @@ def run():
                     termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 try:
                     if launch == 0:
-                        _launch_controller(P, FB)
+                        _launch_controller_demo(P, FB)
                     elif launch == 1:
-                        _launch_volumio(P, FB)
+                        _launch_controller(P, FB)
                     elif launch == 2:
+                        _launch_volumio(P, FB)
+                    elif launch == 3:
                         _launch_weather(P, FB)
                 except KeyboardInterrupt:
                     raise
@@ -234,6 +237,11 @@ def _show_error(P, FB, title, detail):
     except Exception:
         pass
     time.sleep(4)
+
+
+def _launch_controller_demo(P, FB):
+    from apps.controller_demo import ControllerDemoApp
+    ControllerDemoApp(P).run()
 
 
 def _launch_controller(P, FB):
