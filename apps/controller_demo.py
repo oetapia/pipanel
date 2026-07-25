@@ -2,15 +2,19 @@
 Controller input demo — shows live which key is pressed and from which
 controller, rendered to the pipanel framebuffer.
 
-Based on the input mapping in apps/controllers2.py: a single joystick device
-exposes two logical controllers via interleaved button/axis/hat indices.
+A single USB device merges two controllers. Button/axis enumeration order is
+driver-dependent: the indices differ between macOS (IOKit) and the Raspberry
+Pi (Linux evdev), which is the deployment target here — so CONTROLLERS below
+holds the Pi's ordering. Press R to toggle a RAW view that shows the true
+button/axis/hat indices with no mapping applied; use it to confirm the numbers
+on the Pi and update CONTROLLERS if any input is mislabeled.
 
 Runs two ways:
   * As a pipanel app  -> ControllerDemoApp(P).run()  (renders to the panel)
   * Standalone        -> python apps/controller_demo.py  (uses 35panel profile)
 
 Press any button / move a stick / use the D-pad to see it on screen.
-ESC or Q returns to the menu.
+R toggles raw/mapped view.  ESC or Q returns to the menu.
 """
 
 import json
@@ -21,26 +25,30 @@ import numpy as np
 import pygame
 
 
-# Input mapping copied from apps/controllers2.py (that module runs on import,
-# so it can't be reused directly). One device, two logical controllers.
+# One physical USB device merges two controllers with NO overlapping inputs.
+# On the Raspberry Pi (Linux evdev) they map to contiguous blocks of raw
+# indices, NOT the interleaved (odd/even) layout controllers2.py used for macOS:
+#   Controller 1 -> buttons 0-11, axes 0-3, hat 0
+#   Controller 2 -> buttons 12-23, axes 4-7, hat 1
+# Button/axis names are in device order (Y,B,A,X,...  LX,LY,RX,RY).
 CONTROLLERS = {
     "Controller 1": {
         "buttons": {
-            1: "Y", 3: "B", 5: "A", 7: "X",
-            9: "L1", 11: "R1", 13: "L2", 15: "R2",
-            17: "SELECT", 19: "START", 21: "L3", 23: "R3",
+            0: "Y", 1: "B", 2: "A", 3: "X",
+            4: "L1", 5: "R1", 6: "L2", 7: "R2",
+            8: "SELECT", 9: "START", 10: "L3", 11: "R3",
         },
-        "axes": {"LX": 1, "LY": 3, "RX": 7, "RY": 5},
-        "hat": 1,
+        "axes": {"LX": 0, "LY": 1, "RX": 2, "RY": 3},
+        "hat": 0,
     },
     "Controller 2": {
         "buttons": {
-            0: "Y", 2: "B", 4: "A", 6: "X",
-            8: "L1", 10: "R1", 12: "L2", 14: "R2",
-            16: "SELECT", 18: "START", 20: "L3", 22: "R3",
+            12: "Y", 13: "B", 14: "A", 15: "X",
+            16: "L1", 17: "R1", 18: "L2", 19: "R2",
+            20: "SELECT", 21: "START", 22: "L3", 23: "R3",
         },
-        "axes": {"LX": 0, "LY": 2, "RX": 6, "RY": 4},
-        "hat": 0,
+        "axes": {"LX": 4, "LY": 5, "RX": 6, "RY": 7},
+        "hat": 1,
     },
 }
 
@@ -111,6 +119,7 @@ class ControllerDemoApp:
         self.row_h     = int(self.fnt_desc.get_linesize() * 1.15)
 
         self.joy = None
+        self.raw_mode = False  # toggled with R; shows unmapped indices
 
         # Per-index previous state, matching controllers2.py's keying.
         self._last_buttons = {}
@@ -119,6 +128,20 @@ class ControllerDemoApp:
 
         self._last_event      = None  # (player, text)
         self._last_event_time = 0.0
+
+        # Raw-mode change tracking (keyed by raw index, no mapping).
+        self._raw_last_buttons = {}
+        self._raw_last_axes    = {}
+        self._raw_last_hats    = {}
+        self._raw_last_event   = None  # text of most recent raw change
+
+    def _reset_state(self):
+        self._last_buttons.clear()
+        self._last_hats.clear()
+        self._last_axes.clear()
+        self._raw_last_buttons.clear()
+        self._raw_last_axes.clear()
+        self._raw_last_hats.clear()
 
     # ------------------------------------------------------------------
     def _ensure_joystick(self):
@@ -185,6 +208,52 @@ class ControllerDemoApp:
                     self._last_axes[axis] = value
 
         return held
+
+    def _poll_raw(self):
+        """Read every input by raw index, no mapping. Returns held state and
+        records the latest raw change into self._raw_last_event."""
+        pygame.event.pump()
+        num_buttons = self.joy.get_numbuttons()
+        num_axes    = self.joy.get_numaxes()
+        num_hats    = self.joy.get_numhats()
+
+        buttons = []
+        for i in range(num_buttons):
+            s = self.joy.get_button(i)
+            if s:
+                buttons.append(i)
+            if s != self._raw_last_buttons.get(i, 0):
+                if s:
+                    self._raw_last_event = f"button {i}"
+                self._raw_last_buttons[i] = s
+
+        axes = []
+        for i in range(num_axes):
+            v = _axis_filter(self.joy.get_axis(i))
+            if v != 0:
+                axes.append((i, v))
+            if v != self._raw_last_axes.get(i, 0):
+                if v != 0:
+                    self._raw_last_event = f"axis {i} {v:+.2f}"
+                self._raw_last_axes[i] = v
+
+        hats = []
+        for i in range(num_hats):
+            h = self.joy.get_hat(i)
+            if h != (0, 0):
+                hats.append((i, h))
+            if h != self._raw_last_hats.get(i, (0, 0)):
+                if h != (0, 0):
+                    self._raw_last_event = f"hat {i} {h}"
+                self._raw_last_hats[i] = h
+
+        return {
+            "name": self.joy.get_name(),
+            "counts": (num_buttons, num_axes, num_hats),
+            "buttons": buttons,
+            "axes": axes,
+            "hats": hats,
+        }
 
     # ------------------------------------------------------------------
     def _t(self, txt, x, y, col, fnt=None, max_w=None):
@@ -257,7 +326,57 @@ class ControllerDemoApp:
 
         pygame.draw.line(S, GREY, (0, self.H - self.foot_line),
                          (self.W, self.H - self.foot_line), 1)
-        self._t("Press any input   ESC Back", m, self.H - self.foot_txt,
+        self._t("R Raw view   ESC Back", m, self.H - self.foot_txt,
+                CYAN, self.fnt_hint, max_w=self.W - 2 * m)
+
+        fb_write(S, self.fb)
+
+    def _draw_raw(self, raw):
+        S = self.screen
+        m = self.margin
+        S.fill(BLACK)
+
+        self._t("RAW INPUT", m, self.title_y, YELLOW, self.fnt_title)
+        pygame.draw.line(S, YELLOW, (m, self.divider_y),
+                         (self.W - m, self.divider_y), 1)
+
+        nb, na, nh = raw["counts"]
+        y = self.divider_y + int(self.row_h * 0.4)
+        self._t(f"{raw['name']}", m, y, LGREY, self.fnt_hint,
+                max_w=self.W - 2 * m)
+        y += self.row_h
+        self._t(f"{nb} buttons   {na} axes   {nh} hats",
+                m, y, GREY, self.fnt_hint, max_w=self.W - 2 * m)
+
+        # Latest raw change, big.
+        y += int(self.row_h * 1.3)
+        self._t("Last:", m, y, LGREY, self.fnt_desc)
+        self._t(self._raw_last_event or "—",
+                m + self.fnt_desc.size("Last: ")[0], y,
+                WHITE, self.fnt_desc, max_w=self.W - 2 * m)
+
+        # Live held raw inputs.
+        y += self.row_h
+        btns = " ".join(str(i) for i in raw["buttons"]) or "—"
+        self._t("BTN:", m, y, LGREY, self.fnt_desc)
+        self._t(btns, m + self.fnt_desc.size("BTN: ")[0], y, GREEN,
+                self.fnt_desc, max_w=self.W - 2 * m)
+
+        y += self.row_h
+        axes = "  ".join(f"{i}:{v:+.2f}" for i, v in raw["axes"]) or "—"
+        self._t("AXIS:", m, y, LGREY, self.fnt_desc)
+        self._t(axes, m + self.fnt_desc.size("AXIS: ")[0], y, GREEN,
+                self.fnt_desc, max_w=self.W - 2 * m)
+
+        y += self.row_h
+        hats = "  ".join(f"{i}:{h}" for i, h in raw["hats"]) or "—"
+        self._t("HAT:", m, y, LGREY, self.fnt_desc)
+        self._t(hats, m + self.fnt_desc.size("HAT: ")[0], y, GREEN,
+                self.fnt_desc, max_w=self.W - 2 * m)
+
+        pygame.draw.line(S, GREY, (0, self.H - self.foot_line),
+                         (self.W, self.H - self.foot_line), 1)
+        self._t("R Mapped view   ESC Back", m, self.H - self.foot_txt,
                 CYAN, self.fnt_hint, max_w=self.W - 2 * m)
 
         fb_write(S, self.fb)
@@ -271,9 +390,11 @@ class ControllerDemoApp:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         return
-                    if event.type == pygame.KEYDOWN and event.key in (
-                            pygame.K_ESCAPE, pygame.K_q):
-                        return
+                    if event.type == pygame.KEYDOWN:
+                        if event.key in (pygame.K_ESCAPE, pygame.K_q):
+                            return
+                        if event.key == pygame.K_r:
+                            self.raw_mode = not self.raw_mode
 
                 if not self._ensure_joystick():
                     self._draw_waiting()
@@ -282,17 +403,17 @@ class ControllerDemoApp:
 
                 # A disconnected pad raises pygame.error mid-poll; recover.
                 try:
-                    held = self._poll()
+                    if self.raw_mode:
+                        self._draw_raw(self._poll_raw())
+                    else:
+                        self._draw(self._poll())
                 except pygame.error:
                     self.joy = None
-                    self._last_buttons.clear()
-                    self._last_hats.clear()
-                    self._last_axes.clear()
+                    self._reset_state()
                     self._draw_waiting()
                     clock.tick(10)
                     continue
 
-                self._draw(held)
                 clock.tick(60)
         except KeyboardInterrupt:
             pass
