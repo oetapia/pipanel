@@ -8,13 +8,15 @@ Runs two ways:
 Controls:
     RT (hold):          Accelerate forward (proportional to pressure)
     LT (hold):          Reverse (proportional to pressure)
-    Left stick X-axis:  Proportional steering
-    D-pad Left/Right:   Steer left/right (fixed angles)
+    Left stick X-axis:  Proportional steering (auto-centres on release)
+    D-pad Left/Right:   Trim steering -/+5 deg per step (holds position)
     LB/RB:              Decrease/Increase max speed
     A:                  Brake (hard stop)
     X:                  Centre steering
     Y:                  Toggle gear
     B:                  Cycle lights (off -> front -> back -> both)
+    L3 (stick click):   Front lights
+    R3 (stick click):   Back lights
     Start:              Quit (back to menu)
 
 Usage:
@@ -56,6 +58,23 @@ RED    = (220, 0,   0)
 CYAN   = (0,   200, 200)
 GREY   = (80,  80,  80)
 LGREY  = (150, 150, 150)
+
+# The control loop runs at ~50 Hz and the analog trigger/stick jitter by a unit
+# or two even when held steady, so a raw "value changed?" test would fire many
+# blocking WS commands per second. Quantizing to coarse steps means sub-step
+# jitter no longer counts as a change (holding steady -> zero sends), and the
+# min interval caps traffic for values that hover on a step boundary.
+SPEED_STEP        = 5      # motor speed rounded to nearest 5 (0..100)
+ANGLE_STEP        = 5      # servo angle rounded to nearest 5 degrees
+MIN_SEND_INTERVAL = 0.05   # seconds between motor/servo sends (<=20 Hz)
+# D-pad steering is incremental trim (+/-5 per step). Holding repeats at this
+# interval so you can sweep, but far slower than the loop rate.
+DPAD_TRIM_STEP     = 5      # degrees added/removed per d-pad step
+DPAD_REPEAT_INTERVAL = 0.15  # seconds between repeats while d-pad is held
+
+
+def _quantize(value, step):
+    return int(round(value / step)) * step
 
 
 def fb_write(surface, fb):
@@ -104,6 +123,10 @@ class XboxController:
             "start": self.joy.get_button(7),
             "home": self.joy.get_button(8),
 
+            # stick clicks (L3/R3) -> manual lights
+            "l3": self.joy.get_button(9),
+            "r3": self.joy.get_button(10),
+
             # sticks
             "lx": self.deadzone(self.joy.get_axis(0)),
             "ly": -self.deadzone(self.joy.get_axis(1)),
@@ -130,6 +153,10 @@ class PicarXboxController:
     def __init__(self, ip=PICAR_IP, port=5000, base_speed=75,
                  left_angle=45, right_angle=135, quiet=False):
         self.client = PicarWsClientSync(ip, port)
+        # Lights are driven manually (L3/R3); disable the WS client's auto-lights
+        # so motor commands don't piggyback a light command (which raced the
+        # response queue).
+        self.client.auto_lights = False
         self.base_speed = base_speed
         self.left_angle = left_angle
         self.right_angle = right_angle
@@ -140,6 +167,14 @@ class PicarXboxController:
         self._light_cycle = ["off", "front", "back", "both"]
         self._prev = {}
         self.quiet = quiet
+        # Last time a motor/servo command actually went out, for rate limiting.
+        self._last_motor_send = 0.0
+        self._last_servo_send = 0.0
+        # Steering source: the stick auto-recenters on release, the d-pad trim
+        # holds. Track which one last moved so we only recenter after the stick.
+        self._steering_mode = "idle"
+        # Last time a d-pad trim step fired, for hold-to-repeat.
+        self._last_dpad_send = 0.0
 
     def _log(self, msg):
         if not self.quiet:
@@ -178,47 +213,72 @@ class PicarXboxController:
         self.client.set_lights(self.light_state)
         self._log(f"\rLights: {self.light_state}" + " " * 20)
 
+    def _send_motor(self, speed, now, force=False):
+        """Send a motor command only if the (quantized) speed changed and the
+        rate limit allows it. `force` bypasses the rate limit for stop/brake."""
+        if speed == self.current_speed:
+            return
+        if not force and (now - self._last_motor_send) < MIN_SEND_INTERVAL:
+            return
+        self.client.set_motor(speed)
+        self.current_speed = speed
+        self._last_motor_send = now
+
+    def _send_servo(self, angle, now, force=False):
+        """Send a servo command only if the (quantized) angle changed and the
+        rate limit allows it. `force` bypasses the rate limit (e.g. centre)."""
+        if angle == self.current_angle:
+            return
+        if not force and (now - self._last_servo_send) < MIN_SEND_INTERVAL:
+            return
+        self.client.set_servo(angle)
+        self.current_angle = angle
+        self._last_servo_send = now
+
     def update(self, state):
-        # RT = forward, LT = reverse (proportional)
+        now = time.time()
+
+        # RT = forward, LT = reverse (proportional). Quantize so analog jitter
+        # while holding the trigger steady doesn't spam the API.
         rt = state["rt"]
         lt = state["lt"]
 
         if rt > 0.05:
-            speed = int(rt * self.base_speed)
-            speed = max(10, speed)
-            if speed != self.current_speed:
-                self.client.set_motor(speed)
-                self.current_speed = speed
+            speed = max(10, _quantize(rt * self.base_speed, SPEED_STEP))
+            self._send_motor(speed, now)
         elif lt > 0.05:
-            speed = int(lt * self.base_speed)
-            speed = max(10, speed)
-            if -speed != self.current_speed:
-                self.client.set_motor(-speed)
-                self.current_speed = -speed
+            speed = max(10, _quantize(lt * self.base_speed, SPEED_STEP))
+            self._send_motor(-speed, now)
         elif self.current_speed != 0:
-            self.client.stop()
-            self.current_speed = 0
+            # Release -> stop immediately (bypass the rate limit for safety).
+            self._send_motor(0, now, force=True)
 
-        # Left stick X = proportional steering
+        # Steering. The d-pad is incremental trim: each step adds +/-5 to the
+        # *current* angle and holds there. Holding repeats slowly. The left
+        # stick is absolute/proportional and auto-recenters on release; the
+        # d-pad trim must NOT be undone by that recenter, so we only recenter
+        # when the stick was the last thing to move.
         lx = state["lx"]
-        if lx != 0:
-            angle = 90 + int(lx * 90)
-            angle = max(0, min(180, angle))
-            if angle != self.current_angle:
-                self.client.set_servo(angle)
-                self.current_angle = angle
-        elif self.current_angle != 90:
-            self.client.set_servo(90)
-            self.current_angle = 90
-
-        # D-pad left/right: fixed-angle steering
         dpad_x = state["dpad"][0]
-        if dpad_x == -1:
-            self.client.set_servo(self.left_angle)
-            self.current_angle = self.left_angle
-        elif dpad_x == 1:
-            self.client.set_servo(self.right_angle)
-            self.current_angle = self.right_angle
+        prev_dpad_x = self._prev.get("dpad", (0, 0))[0]
+
+        if dpad_x in (-1, 1):
+            # Fire on the initial press, then repeat at a slow interval while held.
+            new_press = dpad_x != prev_dpad_x
+            if new_press or (now - self._last_dpad_send) >= DPAD_REPEAT_INTERVAL:
+                angle = self.current_angle + dpad_x * DPAD_TRIM_STEP
+                angle = max(0, min(180, angle))
+                self._send_servo(angle, now, force=True)
+                self._last_dpad_send = now
+                self._steering_mode = "dpad"
+        elif lx != 0:
+            angle = max(0, min(180, 90 + _quantize(lx * 90, ANGLE_STEP)))
+            self._send_servo(angle, now)
+            self._steering_mode = "stick"
+        elif self._steering_mode == "stick" and self.current_angle != 90:
+            # Recenter only after a stick release — a d-pad trim stays put.
+            self._send_servo(90, now, force=True)
+            self._steering_mode = "idle"
 
         # Button events (edge-triggered)
         if self._button_pressed(state, "a"):
@@ -238,6 +298,17 @@ class PicarXboxController:
 
         if self._button_pressed(state, "b"):
             self._cycle_lights()
+
+        # Manual lights via stick clicks: L3 = front, R3 = back.
+        if self._button_pressed(state, "l3"):
+            self.light_state = "front"
+            self.client.lights_front()
+            self._log("\rLights: front" + " " * 20)
+
+        if self._button_pressed(state, "r3"):
+            self.light_state = "back"
+            self.client.lights_back()
+            self._log("\rLights: back" + " " * 20)
 
         if self._button_pressed(state, "lb"):
             self._adjust_speed(-5)
@@ -274,13 +345,14 @@ class PicarXboxController:
         print("=" * 60)
         print(f"\n  RT (hold):       Accelerate (proportional)")
         print(f"  LT (hold):       Reverse (proportional)")
-        print(f"  Left stick L/R:  Proportional steering")
-        print(f"  D-pad L/R:       Fixed-angle steering")
+        print(f"  Left stick L/R:  Proportional steering (auto-centres)")
+        print(f"  D-pad L/R:       Trim steering -/+5 (holds)")
         print(f"  RB/LB:           Speed up/down (max: {self.base_speed})")
         print(f"  A:               Brake")
         print(f"  X:               Centre steering")
         print(f"  Y:               Toggle gear")
         print(f"  B:               Cycle lights")
+        print(f"  L3/R3:           Front/Back lights")
         print(f"  Start:           Quit")
         print("=" * 60)
 
@@ -393,7 +465,7 @@ class ControllerApp:
 
         pygame.draw.line(S, GREY, (0, self.H - self.foot_line),
                          (self.W, self.H - self.foot_line), 1)
-        self.t("RT/LT Drive  Stick Steer  A Brake  Y Gear  B Lights  Start Quit",
+        self.t("RT/LT Drive  Stick/Dpad Steer  A Brake  Y Gear  L3/R3 Lights  Start Quit",
                m, self.H - self.foot_txt, CYAN, self.fnt_hint,
                max_w=self.W - 2 * m)
 

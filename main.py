@@ -34,7 +34,7 @@ APPS = [
 ]
 
 # App auto-launched when the countdown expires with no selection.
-DEFAULT_APP = 0  # PONG
+DEFAULT_APP = 2  # CONTROLLER
 
 BLACK  = (0,   0,   0)
 WHITE  = (255, 255, 255)
@@ -70,9 +70,14 @@ def run():
     args         = _parse_args(profile_names)
 
     screen_idx = profile_names.index(args.screen)
-    selected   = 0
+    selected   = DEFAULT_APP
 
     pygame.init()
+
+    # Shared controller profile: lets the pad drive the menu (up/down to move,
+    # A/START to launch, B to switch screen). Same enumeration the apps use.
+    from apps.controller_profile import ControllerProfile
+    pads = ControllerProfile()
 
     is_tty = sys.stdin.isatty()
     fd  = sys.stdin.fileno() if is_tty else None
@@ -131,7 +136,7 @@ def run():
                 pygame.draw.line(screen, GREY,
                                  (0, H - M["hint_line_offset"]),
                                  (W, H - M["hint_line_offset"]), 1)
-                hint = "↑↓ Select   Enter Launch   Tab Screen   ESC Quit"
+                hint = "↑↓/Stick Select   A/Enter Launch   B/Tab Screen   ESC Quit"
                 if countdown is not None:
                     hint += f"   [{countdown}s]"
                 screen.blit(fnt_hint.render(hint, True, CYAN),
@@ -148,26 +153,50 @@ def run():
             switch_screen = False
 
             while running:
+                # Gather navigation intents from keyboard and controller so
+                # both drive the menu the same way.
+                nav_up = nav_down = nav_select = nav_screen = nav_quit = False
+
                 key = _read_key()
                 if key is not None:
-                    deadline = time.monotonic() + 10
                     if key in ('\x1b', 'q', 'Q'):
-                        return
+                        nav_quit = True
                     elif key == '\x1b[A':
-                        selected = (selected - 1) % len(APPS)
-                        last_countdown = 10
-                        draw(last_countdown)
+                        nav_up = True
                     elif key == '\x1b[B':
-                        selected = (selected + 1) % len(APPS)
-                        last_countdown = 10
-                        draw(last_countdown)
+                        nav_down = True
                     elif key == '\t':
-                        screen_idx    = (screen_idx + 1) % len(profile_names)
-                        switch_screen = True
-                        running       = False
+                        nav_screen = True
                     elif key in ('\r', '\n'):
-                        launch  = selected
-                        running = False
+                        nav_select = True
+
+                for evt in pads.poll_nav():
+                    if evt == 'up':
+                        nav_up = True
+                    elif evt == 'down':
+                        nav_down = True
+                    elif evt == 'select':
+                        nav_select = True
+                    elif evt == 'back':        # B on the pad cycles the screen
+                        nav_screen = True
+
+                acted = nav_up or nav_down or nav_select or nav_screen or nav_quit
+                if acted:
+                    deadline = time.monotonic() + 10
+
+                if nav_quit:
+                    return
+                if nav_screen:
+                    screen_idx    = (screen_idx + 1) % len(profile_names)
+                    switch_screen = True
+                    running       = False
+                elif nav_select:
+                    launch  = selected
+                    running = False
+                elif nav_up or nav_down:
+                    selected = (selected + (1 if nav_down else -1)) % len(APPS)
+                    last_countdown = 10
+                    draw(last_countdown)
                 elif time.monotonic() >= deadline:
                     launch  = DEFAULT_APP
                     running = False

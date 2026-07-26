@@ -7,7 +7,7 @@ Controls (one controller per player, per the Pi's two-device enumeration):
   * Either START (button 9)       -> serve / restart after a point
   * Keyboard fallback: W/S left, ↑/↓ right, Enter serve, ESC/Q quit
 
-Controller enumeration mirrors apps/controller_demo.py:
+Controller enumeration/mapping comes from apps/controller_profile.py:
   * 2+ devices (Raspberry Pi) -> device 0 = P1, device 1 = P2
   * 1 merged device (macOS)   -> P2 offset into the upper index block
 
@@ -24,17 +24,12 @@ import time
 import numpy as np
 import pygame
 
-
-# Per-controller input layout (matches controller_demo.py; confirmed on Pi).
-LAYOUT = {
-    "axis_y": 1,      # left stick Y
-    "hat": 0,         # D-pad
-    "start": 9,       # START button
-}
-MERGED_BUTTON_STRIDE = 12
-MERGED_AXIS_STRIDE   = 4
-
-AXIS_DEADZONE = 0.15
+# Shared controller profile (device enumeration + index mapping). Works as a
+# package submodule (apps.pong) and as a standalone script.
+if __package__:
+    from .controller_profile import ControllerProfile
+else:
+    from controller_profile import ControllerProfile
 
 BLACK  = (0,   0,   0)
 WHITE  = (255, 255, 255)
@@ -57,10 +52,6 @@ def fb_write(surface, fb):
     b =  raw[:, :, 2].astype(np.uint16) >> 3
     with open(fb, "wb") as f:
         f.write((r | g | b).astype(np.uint16).tobytes())
-
-
-def _axis_filter(v):
-    return 0.0 if abs(v) < AXIS_DEADZONE else v
 
 
 class PongApp:
@@ -99,73 +90,21 @@ class PongApp:
         self.p1_x = self.margin
         self.p2_x = self.W - self.margin - self.paddle_w
 
-        self.joys     = []
-        self.bindings = []   # [{axis_off, btn_off, hat, joy}] per player index
+        self.pads = ControllerProfile()
 
         self._reset_match()
 
     # ------------------------------------------------------------------
-    # Controller handling (device-count aware, per controller_demo.py)
+    # Controller handling (delegated to the shared controller profile)
     # ------------------------------------------------------------------
-    def _build_bindings(self):
-        self.bindings = []
-        if not self.joys:
-            return
-        if len(self.joys) >= 2:
-            for idx in range(2):
-                self.bindings.append({
-                    "joy": self.joys[idx],
-                    "axis_off": 0, "btn_off": 0, "hat": LAYOUT["hat"],
-                })
-        else:
-            j = self.joys[0]
-            self.bindings.append({"joy": j, "axis_off": 0,
-                                  "btn_off": 0, "hat": 0})
-            self.bindings.append({"joy": j, "axis_off": MERGED_AXIS_STRIDE,
-                                  "btn_off": MERGED_BUTTON_STRIDE, "hat": 1})
-
-    def _ensure_joysticks(self):
-        pygame.event.pump()
-        count = pygame.joystick.get_count()
-        if count == 0:
-            if self.joys:
-                self.joys = []
-                self.bindings = []
-            return
-        if len(self.joys) == count and self.bindings:
-            return
-        self.joys = []
-        for i in range(count):
-            try:
-                j = pygame.joystick.Joystick(i)
-                j.init()
-                self.joys.append(j)
-            except pygame.error:
-                pass
-        self._build_bindings()
-
     def _player_input(self, idx):
         """Return (-1..1 vertical intent, start_pressed) for player idx."""
-        if idx >= len(self.bindings):
-            return 0.0, False
-        b   = self.bindings[idx]
-        joy = b["joy"]
-        move = 0.0
-        try:
-            axis = LAYOUT["axis_y"] + b["axis_off"]
-            if axis < joy.get_numaxes():
-                move = _axis_filter(joy.get_axis(axis))
-            hat_id = b["hat"]
-            if hat_id < joy.get_numhats():
-                hy = joy.get_hat(hat_id)[1]
-                if hy:
-                    move = -hy  # hat up (+1) should move paddle up (-y)
-            start_btn = LAYOUT["start"] + b["btn_off"]
-            start = (start_btn < joy.get_numbuttons()
-                     and joy.get_button(start_btn))
-        except pygame.error:
-            return 0.0, False
-        return move, bool(start)
+        st = self.pads.read(idx)
+        move = st.axes.get("LY", 0.0)
+        hy = st.hat[1]
+        if hy:
+            move = -hy  # hat up (+1) should move paddle up (-y)
+        return move, bool(st.buttons.get("START"))
 
     # ------------------------------------------------------------------
     # Game state
@@ -364,7 +303,7 @@ class PongApp:
                 if keys[pygame.K_UP]:           key_move2 -= 1
                 if keys[pygame.K_DOWN]:         key_move2 += 1
 
-                self._ensure_joysticks()
+                self.pads.refresh()
                 move1, start1 = self._player_input(0)
                 move2, start2 = self._player_input(1)
                 if start1 or start2:
