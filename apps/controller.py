@@ -360,7 +360,7 @@ class PicarXboxController:
             while True:
                 state = controller.read()
 
-                if state["start"]:
+                if state["start"] or state["home"] or state["select"]:
                     break
 
                 self.update(state)
@@ -465,7 +465,7 @@ class ControllerApp:
 
         pygame.draw.line(S, GREY, (0, self.H - self.foot_line),
                          (self.W, self.H - self.foot_line), 1)
-        self.t("RT/LT Drive  Stick/Dpad Steer  A Brake  Y Gear  L3/R3 Lights  Start Quit",
+        self.t("RT/LT Drive  Stick/Dpad Steer  A Brake  Y Gear  L3/R3 Lights  Start/Home Menu",
                m, self.H - self.foot_txt, CYAN, self.fnt_hint,
                max_w=self.W - 2 * m)
 
@@ -494,7 +494,9 @@ class ControllerApp:
                     continue
 
                 state = self.input.read()
-                if state["start"]:
+                # Start, Home (Guide), or Select returns to the menu. Home/Select
+                # is the panel-wide "back to menu" button used by the other apps.
+                if state["start"] or state["home"] or state["select"]:
                     break
 
                 self.picar.update(state)

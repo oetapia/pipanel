@@ -6,7 +6,7 @@ Wants=pipanel-update.service
 [Service]
 User=root
 WorkingDirectory=/home/pi/pipanel
-ExecStart=/home/pi/pipanel/.venv/bin/python3 /home/pi/pipanel/main.py
+ExecStart=/usr/bin/python3 /home/pi/pipanel/main.py
 Restart=on-failure
 RestartSec=5
 StandardInput=null

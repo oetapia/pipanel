@@ -47,9 +47,15 @@ from typing import Optional, Callable, Dict, Any
 try:
     import websockets
 except ImportError as e:
-    raise ImportError(
-        "websockets library required — run: pip install websockets"
-    ) from e
+    # Only rewrite the message when websockets is genuinely absent. If the
+    # package is installed but its own import fails (broken/partial install,
+    # missing transitive dep, version/Python mismatch), re-raise the original
+    # so the real cause surfaces instead of a misleading "not installed".
+    if e.name == "websockets":
+        raise ImportError(
+            "websockets library required — run: pip install websockets"
+        ) from e
+    raise
 
 # Import config for default IP
 try:

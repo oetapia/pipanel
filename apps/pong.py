@@ -304,6 +304,9 @@ class PongApp:
                 if keys[pygame.K_DOWN]:         key_move2 += 1
 
                 self.pads.refresh()
+                # SELECT on either controller returns to the menu.
+                if self.pads.menu_pressed():
+                    return
                 move1, start1 = self._player_input(0)
                 move2, start2 = self._player_input(1)
                 if start1 or start2:

@@ -1,3 +1,16 @@
+# Dev/reference only. On the Pi 1B (ARMv6) dependencies are installed
+# system-wide via apt, NOT pip — see deploy.sh. apt ships prebuilt armhf
+# packages; pip would compile from source (slow/failure-prone on ARMv6).
+#
+#   pip name                   apt package
+#   ---------------------------------------------------
+#   pygame                     python3-pygame
+#   numpy                      python3-numpy
+#   requests                   python3-requests
+#   websockets                 python3-websockets
+#   python-socketio[client]    python3-socketio + python3-websocket
+#
+# For a non-Pi dev environment you can still `pip install -r requirements.txt`.
 pygame
 python-socketio[client]
 requests

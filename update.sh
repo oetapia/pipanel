@@ -2,7 +2,6 @@
 set -e
 
 REPO_DIR="/home/pi/pipanel"
-VENV_DIR="$REPO_DIR/.venv"
 
 echo "Updating pipanel from git..."
 cd "$REPO_DIR"
@@ -16,10 +15,6 @@ else
     echo "Git fetch failed or timed out — starting with current version: $(git rev-parse --short HEAD)"
 fi
 
-echo "Syncing Python dependencies..."
-if [ ! -d "$VENV_DIR" ]; then
-    python3 -m venv "$VENV_DIR"
-fi
-"$VENV_DIR/bin/pip" install -q --upgrade pip
-"$VENV_DIR/bin/pip" install -q -r "$REPO_DIR/requirements.txt"
-echo "Dependencies up to date."
+# Dependencies are installed system-wide via apt (see deploy.sh) — there is no
+# venv and no pip sync here. On the Pi 1B (ARMv6) apt ships prebuilt packages,
+# whereas pip would compile from source. Run deploy.sh to change dependencies.

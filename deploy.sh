@@ -16,14 +16,13 @@ for SERVICE_FILE in pipanel-update.service pipanel.service; do
   chown root:root "$INSTALL_DIR/$SERVICE_FILE"
 done
 
-echo "Installing system dependencies..."
-apt install -y python3-numpy python3-pygame python3-venv
-
-echo "Setting up Python venv..."
-PIPANEL_DIR="/home/pi/pipanel"
-sudo -u pi python3 -m venv --system-site-packages "$PIPANEL_DIR/.venv"
-sudo -u pi "$PIPANEL_DIR/.venv/bin/python3" -m ensurepip --upgrade
-sudo -u pi "$PIPANEL_DIR/.venv/bin/python3" -m pip install python-socketio[client] requests websockets
+echo "Installing system dependencies (apt, no venv)..."
+# ARMv6 (Pi 1B) has no prebuilt PyPI wheels, so pip would compile from source.
+# Use the distro's armhf packages instead — prebuilt, low-memory, no compile.
+# All are installed system-wide; the service runs /usr/bin/python3 as root.
+apt update
+apt install -y python3-numpy python3-pygame python3-requests \
+               python3-websockets python3-socketio python3-websocket
 
 echo "Reloading systemd daemon..."
 systemctl daemon-reload

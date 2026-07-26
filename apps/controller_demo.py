@@ -239,7 +239,7 @@ class ControllerDemoApp:
 
         pygame.draw.line(S, GREY, (0, self.H - self.foot_line),
                          (self.W, self.H - self.foot_line), 1)
-        self._t("R Raw view   ESC Back", m, self.H - self.foot_txt,
+        self._t("R Raw view   SELECT/ESC Back", m, self.H - self.foot_txt,
                 CYAN, self.fnt_hint, max_w=self.W - 2 * m)
 
         fb_write(S, self.fb)
@@ -280,7 +280,7 @@ class ControllerDemoApp:
 
         pygame.draw.line(S, GREY, (0, self.H - self.foot_line),
                          (self.W, self.H - self.foot_line), 1)
-        self._t("R Mapped view   ESC Back", m, self.H - self.foot_txt,
+        self._t("R Mapped view   SELECT/ESC Back", m, self.H - self.foot_txt,
                 CYAN, self.fnt_hint, max_w=self.W - 2 * m)
 
         fb_write(S, self.fb)
@@ -304,6 +304,10 @@ class ControllerDemoApp:
                     self._draw_waiting()
                     clock.tick(10)
                     continue
+
+                # SELECT on either controller returns to the menu.
+                if self.pads.menu_pressed():
+                    return
 
                 try:
                     if self.raw_mode:

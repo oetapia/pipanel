@@ -81,6 +81,7 @@ class ControllerProfile:
         self.bindings = []   # per player idx: {joy, btn_off, axis_off, hat}
         self._nav_latched = {}  # (idx, direction) -> bool, for edge detection
         self._prev_btn    = {}  # (idx, name) -> 0/1, for edge detection
+        self._menu_latched = {}  # idx -> 0/1, for the SELECT-to-menu edge
 
     # ------------------------------------------------------------------
     def _build_bindings(self):
@@ -112,6 +113,7 @@ class ControllerProfile:
                 self.bindings = []
                 self._nav_latched.clear()
                 self._prev_btn.clear()
+                self._menu_latched.clear()
             return 0
         if len(self.joys) == count and self.bindings:
             return len(self.bindings)
@@ -126,6 +128,7 @@ class ControllerProfile:
         self._build_bindings()
         self._nav_latched.clear()
         self._prev_btn.clear()
+        self._menu_latched.clear()
         return len(self.bindings)
 
     def count(self):
@@ -221,3 +224,21 @@ class ControllerProfile:
                     events.add(evt)
                 self._prev_btn[key] = cur
         return events
+
+    def menu_pressed(self):
+        """Edge-triggered "return to menu" press from any controller.
+
+        The dual adapter has no Home/Guide button, so SELECT is the menu
+        button (on a standard Xbox pad that same physical button is Guide).
+        Returns True once per press. Call once per frame.
+
+        Assumes controllers are already enumerated this frame (e.g. after a
+        read()/poll_nav()/refresh() call) so it can be used in a poll loop
+        without forcing an extra refresh."""
+        pressed = False
+        for idx in range(self.count()):
+            cur = self.read(idx).buttons.get("SELECT", 0)
+            if cur and not self._menu_latched.get(idx):
+                pressed = True
+            self._menu_latched[idx] = cur
+        return pressed
