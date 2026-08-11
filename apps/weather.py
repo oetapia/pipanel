@@ -3,9 +3,13 @@ import json
 import os
 import time
 import threading
-import numpy as np
 import requests
 import pygame
+
+if __package__:
+    from .display import make_sink
+else:
+    from display import make_sink
 
 
 # Load .env from project root (one level above this file)
@@ -41,23 +45,13 @@ GREY   = (80,  80,  80)
 LGREY  = (150, 150, 150)
 
 
-def fb_write(surface, fb):
-    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
-    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
-    b =  raw[:, :, 2].astype(np.uint16) >> 3
-    with open(fb, "wb") as f:
-        f.write((r | g | b).astype(np.uint16).tobytes())
-
-
 class WeatherApp:
-    def __init__(self, P, FB=None):
+    def __init__(self, P, sink=None):
         self.W = P["weather"]
-        sdl = P["sdl"]
 
         self.screen_w = P["screen"]["w"]
         self.screen_h = P["screen"]["h"]
-        self.fb = FB or sdl["fbdev"]
+        self.sink     = sink or make_sink(P)
 
         os.environ["SDL_VIDEODRIVER"] = "offscreen"
         pygame.init()
@@ -192,7 +186,7 @@ class WeatherApp:
         pygame.draw.line(self.screen, GREY, (0, SCREEN_H - W["footer_line_offset"]), (SCREEN_W, SCREEN_H - W["footer_line_offset"]), 1)
         self._t("↑↓ City   R Refresh   ESC Back", W["header_x"], SCREEN_H - W["footer_text_offset"], CYAN, self.fnt_sm)
 
-        fb_write(self.screen, self.fb)
+        self.sink.write(self.screen)
 
     # ------------------------------------------------------------------
     def run(self):

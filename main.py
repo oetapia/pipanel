@@ -6,20 +6,43 @@ import sys
 import termios
 import time
 import tty
-import numpy as np
 import pygame
 
+from apps.display import make_sink
+
 _ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# Written by deploy.sh with the screen chosen at install time, so the panel
+# comes up on the right display with no arguments. Untracked/gitignored, so
+# update.sh's `git reset --hard` leaves it alone.
+_SCREEN_CONF = os.path.join(_ROOT, "screen.conf")
 
 def _load_profiles():
     with open(os.path.join(_ROOT, "profiles.json")) as f:
         return json.load(f)
 
+def _installed_screen(profile_names):
+    """Screen to use when --screen isn't given: $PIPANEL_SCREEN, then the one
+    recorded by deploy.sh, then the first profile."""
+    name = os.environ.get("PIPANEL_SCREEN", "").strip()
+    if not name:
+        try:
+            with open(_SCREEN_CONF) as f:
+                name = f.read().strip()
+        except OSError:
+            name = ""
+    if name and name not in profile_names:
+        print(f"Ignoring unknown screen {name!r}; using {profile_names[0]}.")
+        name = ""
+    return name or profile_names[0]
+
 def _parse_args(profile_names):
+    default = _installed_screen(profile_names)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--screen", default=profile_names[0],
+    parser.add_argument("--screen", default=default,
                         choices=profile_names,
-                        help=f"Profile name ({', '.join(profile_names)})")
+                        help=f"Profile name ({', '.join(profile_names)}); "
+                             f"defaults to {default}")
     return parser.parse_args()
 
 os.environ["SDL_VIDEODRIVER"] = "offscreen"
@@ -44,15 +67,6 @@ GREY   = (80,  80,  80)
 HLBG   = (20,  20,  60)
 
 
-def fb_write(surface, fb):
-    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
-    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
-    b =  raw[:, :, 2].astype(np.uint16) >> 3
-    with open(fb, "wb") as f:
-        f.write((r | g | b).astype(np.uint16).tobytes())
-
-
 def _read_key():
     if not sys.stdin.isatty():
         return None
@@ -71,6 +85,7 @@ def run():
 
     screen_idx = profile_names.index(args.screen)
     selected   = DEFAULT_APP
+    sinks      = {}
 
     pygame.init()
 
@@ -91,8 +106,15 @@ def run():
             profile_name = profile_names[screen_idx]
             P  = profiles[profile_name]
             M  = P["main"]
-            FB = P["sdl"]["fbdev"]
             W, H = P["screen"]["w"], P["screen"]["h"]
+
+            # The profile owns where frames go: a framebuffer device, or an SPI
+            # panel like the Waveshare HAT that has no /dev/fbN at all. Sinks
+            # are cached per profile so switching screens doesn't re-init the
+            # SPI panel (and so apps reuse the pins the menu already claimed).
+            if profile_name not in sinks:
+                sinks[profile_name] = make_sink(P)
+            sink = sinks[profile_name]
 
             pygame.display.quit()
             pygame.display.init()
@@ -109,9 +131,11 @@ def run():
                 # Title + screen name
                 screen.blit(fnt_title.render("Apps", True, YELLOW),
                             (M["title_x"], M["title_y"]))
-                screen_label = fnt_desc.render(f"[Tab] {profile_name}", True, GREY)
-                screen.blit(screen_label,
-                            (W - screen_label.get_width() - M["title_x"], M["title_y"] + 4))
+                # Tiny screens have no room beside the title for the label.
+                if M.get("show_screen_label", True):
+                    screen_label = fnt_desc.render(f"[Tab] {profile_name}", True, GREY)
+                    screen.blit(screen_label,
+                                (W - screen_label.get_width() - M["title_x"], M["title_y"] + 4))
                 pygame.draw.line(screen, YELLOW,
                                  (M["title_x"], M["divider_y"]),
                                  (W - M["title_x"], M["divider_y"]), 1)
@@ -129,19 +153,21 @@ def run():
                         prefix   = " "
                     screen.blit(fnt_name.render(f"{prefix} {app['name']}", True, name_col),
                                 (M["title_x"], y))
-                    screen.blit(fnt_desc.render(app["description"], True, CYAN),
-                                (M["desc_x_indent"], y + M["desc_y_offset"]))
+                    if M.get("show_desc", True):
+                        screen.blit(fnt_desc.render(app["description"], True, CYAN),
+                                    (M["desc_x_indent"], y + M["desc_y_offset"]))
                     y += M["app_item_h"]
 
                 pygame.draw.line(screen, GREY,
                                  (0, H - M["hint_line_offset"]),
                                  (W, H - M["hint_line_offset"]), 1)
-                hint = "↑↓/Stick Select   A/Enter Launch   B/Tab Screen   ESC Quit"
+                hint = M.get("hint_text",
+                             "↑↓/Stick Select   A/Enter Launch   B/Tab Screen   ESC Quit")
                 if countdown is not None:
                     hint += f"   [{countdown}s]"
                 screen.blit(fnt_hint.render(hint, True, CYAN),
                     (M["title_x"], H - M["hint_text_offset"]))
-                fb_write(screen, FB)
+                sink.write(screen)
 
             last_countdown = 10
             draw(last_countdown)
@@ -215,15 +241,15 @@ def run():
                     termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 try:
                     if launch == 0:
-                        _launch_pong(P, FB)
+                        _launch_pong(P, sink)
                     elif launch == 1:
-                        _launch_controller_demo(P, FB)
+                        _launch_controller_demo(P, sink)
                     elif launch == 2:
-                        _launch_controller(P, FB)
+                        _launch_controller(P, sink)
                     elif launch == 3:
-                        _launch_volumio(P, FB)
+                        _launch_volumio(P, sink)
                     elif launch == 4:
-                        _launch_weather(P, FB)
+                        _launch_weather(P, sink)
                 except KeyboardInterrupt:
                     raise
                 except BaseException:
@@ -231,7 +257,7 @@ def run():
                     # take down the whole panel — show it and return to the menu.
                     import traceback
                     traceback.print_exc()
-                    _show_error(P, FB, f"{APPS[launch]['name']} failed",
+                    _show_error(P, sink, f"{APPS[launch]['name']} failed",
                                 traceback.format_exc().strip().splitlines()[-1])
                 finally:
                     if is_tty:
@@ -240,9 +266,14 @@ def run():
     finally:
         if is_tty:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        for s in sinks.values():
+            try:
+                s.close()
+            except Exception:
+                pass
 
 
-def _show_error(P, FB, title, detail):
+def _show_error(P, sink, title, detail):
     """Render an app-launch failure to the panel, then pause so it's readable."""
     W, H = P["screen"]["w"], P["screen"]["h"]
     M = P["main"]
@@ -265,37 +296,37 @@ def _show_error(P, FB, title, detail):
                     (margin, M["title_y"] + M["fonts"]["name"]))
         screen.blit(fnt_desc.render("Returning to menu...", True, GREY),
                     (margin, H - M["hint_text_offset"]))
-        fb_write(screen, FB)
+        sink.write(screen)
     except Exception:
         pass
     time.sleep(4)
 
 
-def _launch_pong(P, FB):
+def _launch_pong(P, sink):
     from apps.pong import PongApp
-    PongApp(P).run()
+    PongApp(P, sink).run()
 
 
-def _launch_controller_demo(P, FB):
+def _launch_controller_demo(P, sink):
     from apps.controller_demo import ControllerDemoApp
-    ControllerDemoApp(P).run()
+    ControllerDemoApp(P, sink).run()
 
 
-def _launch_controller(P, FB):
+def _launch_controller(P, sink):
     from apps.controller import ControllerApp
-    ControllerApp(P).run()
+    ControllerApp(P, sink=sink).run()
 
 
-def _launch_volumio(P, FB):
+def _launch_volumio(P, sink):
     import threading
     from apps.volumio import socket_thread, Display
     threading.Thread(target=socket_thread, daemon=True).start()
-    Display(P).run()
+    Display(P, sink).run()
 
 
-def _launch_weather(P, FB):
+def _launch_weather(P, sink):
     from apps.weather import WeatherApp
-    WeatherApp(P, FB).run()
+    WeatherApp(P, sink).run()
 
 
 if __name__ == "__main__":

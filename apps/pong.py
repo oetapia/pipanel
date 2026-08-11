@@ -21,15 +21,16 @@ import math
 import os
 import time
 
-import numpy as np
 import pygame
 
-# Shared controller profile (device enumeration + index mapping). Works as a
-# package submodule (apps.pong) and as a standalone script.
+# Shared controller profile (device enumeration + index mapping) and display
+# sink. Works as a package submodule (apps.pong) and as a standalone script.
 if __package__:
     from .controller_profile import ControllerProfile
+    from .display import make_sink
 else:
     from controller_profile import ControllerProfile
+    from display import make_sink
 
 BLACK  = (0,   0,   0)
 WHITE  = (255, 255, 255)
@@ -45,25 +46,15 @@ P2_COLOR = (255, 150, 90)
 WIN_SCORE = 7
 
 
-def fb_write(surface, fb):
-    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
-    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
-    b =  raw[:, :, 2].astype(np.uint16) >> 3
-    with open(fb, "wb") as f:
-        f.write((r | g | b).astype(np.uint16).tobytes())
-
-
 class PongApp:
-    """pipanel app: two-player Pong drawn to the framebuffer."""
+    """pipanel app: two-player Pong drawn to the profile's display sink."""
 
-    def __init__(self, P):
-        M   = P["main"]
-        sdl = P["sdl"]
+    def __init__(self, P, sink=None):
+        M = P["main"]
 
-        self.W  = P["screen"]["w"]
-        self.H  = P["screen"]["h"]
-        self.fb = sdl["fbdev"]
+        self.W    = P["screen"]["w"]
+        self.H    = P["screen"]["h"]
+        self.sink = sink or make_sink(P)
 
         os.environ["SDL_VIDEODRIVER"] = "offscreen"
         pygame.init()
@@ -265,7 +256,7 @@ class PongApp:
                 self.margin, self.H - self.fnt_hint.get_linesize() - 2,
                 CYAN, self.fnt_hint, max_w=self.W - 2 * self.margin)
 
-        fb_write(S, self.fb)
+        self.sink.write(S)
 
     def _t(self, txt, x, y, col, fnt, max_w=None):
         txt = str(txt)

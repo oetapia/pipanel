@@ -5,3 +5,7 @@
 .env
 source/
 __pycache__/
+docs/
+
+#install-time screen selection (written by deploy.sh)
+screen.conf

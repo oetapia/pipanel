@@ -1,7 +1,7 @@
 {
   "35panel": {
     "screen": { "w": 480, "h": 320 },
-    "sdl": { "videodriver": "fbdev", "fbdev": "/dev/fb1" },
+    "sdl": { "videodriver": "fbdev", "driver": "fbdev", "fbdev": "/dev/fb1" },
     "main": {
       "fonts": { "title": 40, "name": 30, "desc": 22, "hint": 20 },
       "title_x": 20, "title_y": 16,
@@ -41,7 +41,7 @@
 
   "1080TV": {
     "screen": { "w": 1920, "h": 1080 },
-    "sdl": { "videodriver": "offscreen", "fbdev": "/dev/fb0" },
+    "sdl": { "videodriver": "offscreen", "driver": "fbdev", "fbdev": "/dev/fb0" },
     "main": {
       "fonts": { "title": 120, "name": 90, "desc": 66, "hint": 60 },
       "title_x": 80,  "title_y": 54,
@@ -76,6 +76,56 @@
       "icon_x_from_right": 465, "icon_y": 175, "icon_size": 324,
       "footer_line_offset": 100,
       "footer_text_offset": 68
+    }
+  },
+
+  "waveshare144": {
+    "screen": { "w": 128, "h": 128 },
+    "sdl": {
+      "videodriver": "offscreen",
+      "driver": "waveshare_st7735",
+      "spi": { "bus": 0, "device": 0, "speed_hz": 9000000 },
+      "gpio": { "rst": 27, "dc": 25, "bl": 24, "cs": 8 },
+      "scan_dir": "U2D_R2L",
+      "backlight": 100
+    },
+    "main": {
+      "fonts": { "title": 17, "name": 14, "desc": 11, "hint": 11 },
+      "title_x": 4, "title_y": 2,
+      "divider_y": 19,
+      "apps_y": 25, "app_item_h": 17,
+      "highlight_h": 16, "highlight_x_pad": 2, "highlight_w_pad": 4,
+      "hint_line_offset": 14,
+      "hint_text_offset": 11,
+      "desc_x_indent": 14,
+      "desc_y_offset": 12,
+      "show_desc": false,
+      "show_screen_label": false,
+      "hint_text": "↑↓ Sel  A Go  B Scr"
+    },
+    "volumio": {
+      "fonts": { "lg": 13, "md": 11, "sm": 10, "lyr": 11 },
+      "col1_x": 0,  "col1_w": 86,
+      "col2_x": 89, "col2_w": 39,
+      "div_col": 87,
+      "div_bar": 112,
+      "bar_y1_offset": 2,
+      "bar_y2_offset": 8,
+      "lyric_top": 2,
+      "lyric_line_h": 11,
+      "queue_item_h": 14
+    },
+    "weather": {
+      "fonts": { "xl": 26, "lg": 13, "md": 11, "sm": 10 },
+      "header_x": 4,  "header_y": 3,
+      "city_x": 62,   "city_y": 3,
+      "header_line_y": 17,
+      "temp_x": 4,    "temp_y": 21,
+      "condition_x": 4, "condition_y": 50, "condition_max_w": 80,
+      "details_y": 66, "details_label_x": 4, "details_val_x": 62, "detail_step": 11,
+      "icon_x_from_right": 34, "icon_y": 20, "icon_size": 30,
+      "footer_line_offset": 13,
+      "footer_text_offset": 10
     }
   }
 }

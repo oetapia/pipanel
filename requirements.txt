@@ -10,6 +10,13 @@
 #   websockets                 python3-websockets
 #   python-socketio[client]    python3-socketio + python3-websocket
 #
+# Only for the waveshare144 screen (SPI panel, Pi-only — deploy.sh installs
+# these when that screen is selected, and they are deliberately not listed
+# below so a non-Pi `pip install -r requirements.txt` still works):
+#
+#   spidev                     python3-spidev
+#   RPi.GPIO                   python3-rpi.gpio
+#
 # For a non-Pi dev environment you can still `pip install -r requirements.txt`.
 pygame
 python-socketio[client]

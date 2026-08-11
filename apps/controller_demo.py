@@ -20,15 +20,16 @@ import json
 import os
 import time
 
-import numpy as np
 import pygame
 
 if __package__:
     from .controller_profile import (
         ControllerProfile, PLAYERS, PLAYER_COLORS, HAT_DIRECTIONS)
+    from .display import make_sink
 else:
     from controller_profile import (
         ControllerProfile, PLAYERS, PLAYER_COLORS, HAT_DIRECTIONS)
+    from display import make_sink
 
 
 EVENT_HOLD = 1.5  # seconds the latest-event banner stays highlighted
@@ -42,25 +43,15 @@ GREY   = (80,  80,  80)
 LGREY  = (150, 150, 150)
 
 
-def fb_write(surface, fb):
-    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
-    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
-    b =  raw[:, :, 2].astype(np.uint16) >> 3
-    with open(fb, "wb") as f:
-        f.write((r | g | b).astype(np.uint16).tobytes())
-
-
 class ControllerDemoApp:
-    """pipanel app: renders live controller input to the framebuffer."""
+    """pipanel app: renders live controller input to the display sink."""
 
-    def __init__(self, P):
-        M   = P["main"]
-        sdl = P["sdl"]
+    def __init__(self, P, sink=None):
+        M = P["main"]
 
-        self.W  = P["screen"]["w"]
-        self.H  = P["screen"]["h"]
-        self.fb = sdl["fbdev"]
+        self.W    = P["screen"]["w"]
+        self.H    = P["screen"]["h"]
+        self.sink = sink or make_sink(P)
 
         os.environ["SDL_VIDEODRIVER"] = "offscreen"
         pygame.init()
@@ -187,7 +178,7 @@ class ControllerDemoApp:
                 self.divider_y + self.row_h * 2, LGREY, self.fnt_name)
         self._t("ESC to go back", self.margin, self.H - self.foot_txt,
                 CYAN, self.fnt_hint)
-        fb_write(S, self.fb)
+        self.sink.write(S)
 
     def _draw(self, held):
         S = self.screen
@@ -242,7 +233,7 @@ class ControllerDemoApp:
         self._t("R Raw view   SELECT/ESC Back", m, self.H - self.foot_txt,
                 CYAN, self.fnt_hint, max_w=self.W - 2 * m)
 
-        fb_write(S, self.fb)
+        self.sink.write(S)
 
     def _draw_raw(self, devices):
         S = self.screen
@@ -283,7 +274,7 @@ class ControllerDemoApp:
         self._t("R Mapped view   SELECT/ESC Back", m, self.H - self.foot_txt,
                 CYAN, self.fnt_hint, max_w=self.W - 2 * m)
 
-        fb_write(S, self.fb)
+        self.sink.write(S)
 
     # ------------------------------------------------------------------
     def run(self):

@@ -28,7 +28,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import pygame
 
 try:
@@ -46,8 +45,10 @@ except (ImportError, AttributeError):
 # missing dependency) propagates with its real message instead of being masked.
 if __package__:
     from .picar_ws_client import PicarWsClientSync
+    from .display import make_sink
 else:
     from picar_ws_client import PicarWsClientSync
+    from display import make_sink
 
 
 BLACK  = (0,   0,   0)
@@ -75,15 +76,6 @@ DPAD_REPEAT_INTERVAL = 0.15  # seconds between repeats while d-pad is held
 
 def _quantize(value, step):
     return int(round(value / step)) * step
-
-
-def fb_write(surface, fb):
-    raw = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-    r = (raw[:, :, 0].astype(np.uint16) >> 3) << 11
-    g = (raw[:, :, 1].astype(np.uint16) >> 2) << 5
-    b =  raw[:, :, 2].astype(np.uint16) >> 3
-    with open(fb, "wb") as f:
-        f.write((r | g | b).astype(np.uint16).tobytes())
 
 
 class XboxController:
@@ -375,15 +367,14 @@ class PicarXboxController:
 
 
 class ControllerApp:
-    """pipanel app: drives the Picar and renders a HUD to the framebuffer."""
+    """pipanel app: drives the Picar and renders a HUD to the display sink."""
 
-    def __init__(self, P, ip=PICAR_IP, port=5000, base_speed=75):
-        M   = P["main"]
-        sdl = P["sdl"]
+    def __init__(self, P, ip=PICAR_IP, port=5000, base_speed=75, sink=None):
+        M = P["main"]
 
         self.W = P["screen"]["w"]
         self.H = P["screen"]["h"]
-        self.fb = sdl["fbdev"]
+        self.sink = sink or make_sink(P)
 
         os.environ["SDL_VIDEODRIVER"] = "offscreen"
         pygame.init()
@@ -469,7 +460,7 @@ class ControllerApp:
                m, self.H - self.foot_txt, CYAN, self.fnt_hint,
                max_w=self.W - 2 * m)
 
-        fb_write(S, self.fb)
+        self.sink.write(S)
 
     def run(self):
         self._draw("Connecting to Picar...")
