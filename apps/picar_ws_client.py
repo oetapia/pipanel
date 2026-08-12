@@ -19,8 +19,10 @@ Two send paths, and picking the right one matters:
 
 Driving a vehicle from the blocking path stalls the input loop for one RTT per
 command, which starves input sampling and makes the car react to stale sticks.
-Replies are correlated by request id, so a timed-out command can no longer
-leave an orphan reply that every later command reads off by one.
+Replies are correlated by request id (the "r" key, echoed by the firmware), so a
+timed-out command can no longer leave an orphan reply that every later command
+reads off by one. Note "i" is already the icon field of the display command and
+cannot be reused for this.
 
 Usage (async):
     import asyncio
@@ -185,7 +187,7 @@ class PicarWsClient:
         t0 = time.time()
         try:
             async with self._lock:
-                await self._ws.send(json.dumps({**cmd, "i": rid}))
+                await self._ws.send(json.dumps({**cmd, "r": rid}))
             response = await asyncio.wait_for(fut, timeout=timeout)
             self.last_rtt_ms = (time.time() - t0) * 1000
             return response
@@ -246,7 +248,7 @@ class PicarWsClient:
 
     def _resolve(self, data: dict):
         """Hand a reply to the request that asked for it."""
-        rid = data.get("i")
+        rid = data.get("r")
         if rid is not None:
             # An id we no longer hold is a late reply to a timed-out request.
             fut = self._pending.pop(rid, None)

@@ -17,8 +17,9 @@ Watch the "tx/s" figure on the HUD to see what the link is actually sending.
 Controls:
     RT (hold):          Accelerate forward (proportional to pressure)
     LT (hold):          Reverse (proportional to pressure)
-    Left stick X-axis:  Proportional steering (auto-centres on release)
-    D-pad Left/Right:   Trim steering -/+5 deg per step (holds position)
+    D-pad Left/Right:   Steering, -/+15 deg per step (holds position; hold the
+                        direction to sweep). The only steering input — the left
+                        stick deliberately does not steer, see update().
     LB/RB:              Decrease/Increase max speed
     A:                  Brake (hard stop)
     X:                  Centre steering
@@ -85,26 +86,17 @@ ANGLE_HYSTERESIS = 3     # servo degrees likewise
 SLEW_DEG_PER_S  = 240    # cap servo travel so a stick flick can't slam it
 TRIGGER_ON      = 0.05   # trigger travel below this counts as released
 
-STEER_EXPO = 2.0   # >1 softens the centre: fine trim near 0, full lock at the end
-
 # Input polling is cheap, drawing is not, so they get separate rates.
 INPUT_HZ      = 50
 DRAW_HZ       = 12
 DRAW_INTERVAL = 1.0 / DRAW_HZ
 
-# D-pad steering is incremental trim (+/-5 per step). Holding repeats at this
-# interval so you can sweep, but far slower than the loop rate.
-DPAD_TRIM_STEP     = 5      # degrees added/removed per d-pad step
-DPAD_REPEAT_INTERVAL = 0.15  # seconds between repeats while d-pad is held
-
-
-def _expo(value, curve=STEER_EXPO):
-    """Shape a -1..1 axis so small deflections stay small.
-
-    Linear steering spends most of the stick's travel in angles that are all
-    too sharp to be useful, which is what makes you saw at the stick — and
-    every correction used to cost a network command."""
-    return math.copysign(abs(value) ** curve, value)
+# Steering is the d-pad only, and it is incremental trim: each step adds a fixed
+# offset to the current angle and holds there — it does not spring back. Holding
+# a direction repeats at the interval below so you can sweep to full lock in
+# about half a second without it running away between polls.
+DPAD_TRIM_STEP       = 15    # degrees per d-pad step
+DPAD_REPEAT_INTERVAL = 0.15  # seconds between repeats while a direction is held
 
 
 class XboxController:
@@ -274,8 +266,13 @@ class PicarXboxController:
         # response queue).
         self.client.auto_lights = False
         self.base_speed = base_speed
-        self.left_angle = left_angle
-        self.right_angle = right_angle
+        # Steering limits. These were accepted as CLI flags and then never read —
+        # the stick steered across the full 0..180 instead. Now they bound the
+        # d-pad trim, so --left-angle/--right-angle actually do something; pass
+        # 0 and 180 for the old unrestricted range. Clamped either side of centre
+        # so a swapped pair can't invert the steering.
+        self.left_angle = max(0, min(90, int(left_angle)))
+        self.right_angle = min(180, max(90, int(right_angle)))
         self.current_speed = 0
         self.current_angle = 90
         self.gear_on = False
@@ -285,9 +282,6 @@ class PicarXboxController:
         self.quiet = quiet
         # All throttle/steering traffic goes through here, on its own thread.
         self.link = ControlLink(self.client)
-        # Steering source: the stick auto-recenters on release, the d-pad trim
-        # holds. Track which one last moved so we only recenter after the stick.
-        self._steering_mode = "idle"
         # Last time a d-pad trim step fired, for hold-to-repeat.
         self._last_dpad_send = 0.0
 
@@ -355,33 +349,28 @@ class PicarXboxController:
             self.current_speed = 0
         self.link.target_speed = self.current_speed
 
-        # Steering. The d-pad is incremental trim: each step adds +/-5 to the
-        # *current* angle and holds there. Holding repeats slowly. The left
-        # stick is absolute/proportional and auto-recenters on release; the
-        # d-pad trim must NOT be undone by that recenter, so we only recenter
-        # when the stick was the last thing to move.
-        lx = state["lx"]
+        # Steering: the d-pad, and only the d-pad. The left stick used to steer
+        # as well, which is what made the car feel like it was getting mixed
+        # signals — one servo with two masters. A stick reads a nonzero LX from
+        # rest drift or a stray thumb, and because the stick path was absolute it
+        # would snap the angle away from wherever the d-pad had just put it, then
+        # recentre on "release". Deleting that path is the fix; the stick is
+        # still sampled into state["lx"], nothing steers with it.
+        #
+        # Trim, not spring-back: a step moves the angle and it stays there, so
+        # you set a line through a corner and leave it. X recentres.
         dpad_x = state["dpad"][0]
         prev_dpad_x = self._prev.get("dpad", (0, 0))[0]
 
         if dpad_x in (-1, 1):
-            # Fire on the initial press, then repeat at a slow interval while held.
+            # Fire on the press (or a direction change), then repeat while held.
             new_press = dpad_x != prev_dpad_x
             if new_press or (now - self._last_dpad_send) >= DPAD_REPEAT_INTERVAL:
                 angle = self.current_angle + dpad_x * DPAD_TRIM_STEP
-                self.current_angle = max(0, min(180, angle))
+                self.current_angle = max(self.left_angle,
+                                         min(self.right_angle, angle))
                 self.link.target_angle = self.current_angle
                 self._last_dpad_send = now
-                self._steering_mode = "dpad"
-        elif lx != 0:
-            self.current_angle = max(0, min(180, int(round(90 + _expo(lx) * 90))))
-            self.link.target_angle = self.current_angle
-            self._steering_mode = "stick"
-        elif self._steering_mode == "stick" and self.current_angle != 90:
-            # Recenter only after a stick release — a d-pad trim stays put.
-            self.current_angle = 90
-            self.link.target_angle = 90
-            self._steering_mode = "idle"
 
         # Button events (edge-triggered)
         if self._button_pressed(state, "a"):
@@ -457,8 +446,8 @@ class PicarXboxController:
         print("=" * 60)
         print(f"\n  RT (hold):       Accelerate (proportional)")
         print(f"  LT (hold):       Reverse (proportional)")
-        print(f"  Left stick L/R:  Proportional steering (auto-centres)")
-        print(f"  D-pad L/R:       Trim steering -/+5 (holds)")
+        print(f"  D-pad L/R:       Steering -/+{DPAD_TRIM_STEP} (holds, "
+              f"{self.left_angle}-{self.right_angle}°)")
         print(f"  RB/LB:           Speed up/down (max: {self.base_speed})")
         print(f"  A:               Brake")
         print(f"  X:               Centre steering")
@@ -582,7 +571,7 @@ class ControllerApp:
 
         pygame.draw.line(S, GREY, (0, self.H - self.foot_line),
                          (self.W, self.H - self.foot_line), 1)
-        self.t("RT/LT Drive  Stick/Dpad Steer  A Brake  Y Gear  L3/R3 Lights  Start/Home Menu",
+        self.t("RT/LT Drive  Dpad Steer  X Centre  A Brake  Y Gear  L3/R3 Lights  Start/Home Menu",
                m, self.H - self.foot_txt, CYAN, self.fnt_hint,
                max_w=self.W - 2 * m)
 
