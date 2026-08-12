@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 import select
 import sys
@@ -9,40 +8,19 @@ import tty
 import pygame
 
 from apps.display import make_sink
+# PIPANEL_SCREEN in .env picks the display for this device, so the panel comes
+# up on the right screen with no arguments — see apps/env.py and .env.example.
+from apps.env import ENV_PATH, load_profiles, screen_name
 
-_ROOT = os.path.dirname(os.path.abspath(__file__))
-
-# Written by deploy.sh with the screen chosen at install time, so the panel
-# comes up on the right display with no arguments. Untracked/gitignored, so
-# update.sh's `git reset --hard` leaves it alone.
-_SCREEN_CONF = os.path.join(_ROOT, "screen.conf")
-
-def _load_profiles():
-    with open(os.path.join(_ROOT, "profiles.json")) as f:
-        return json.load(f)
-
-def _installed_screen(profile_names):
-    """Screen to use when --screen isn't given: $PIPANEL_SCREEN, then the one
-    recorded by deploy.sh, then the first profile."""
-    name = os.environ.get("PIPANEL_SCREEN", "").strip()
-    if not name:
-        try:
-            with open(_SCREEN_CONF) as f:
-                name = f.read().strip()
-        except OSError:
-            name = ""
-    if name and name not in profile_names:
-        print(f"Ignoring unknown screen {name!r}; using {profile_names[0]}.")
-        name = ""
-    return name or profile_names[0]
 
 def _parse_args(profile_names):
-    default = _installed_screen(profile_names)
+    default = screen_name(profile_names)
     parser = argparse.ArgumentParser()
     parser.add_argument("--screen", default=default,
                         choices=profile_names,
                         help=f"Profile name ({', '.join(profile_names)}); "
-                             f"defaults to {default}")
+                             f"defaults to PIPANEL_SCREEN from {ENV_PATH} "
+                             f"({default})")
     return parser.parse_args()
 
 os.environ["SDL_VIDEODRIVER"] = "offscreen"
@@ -79,7 +57,7 @@ def _read_key():
 
 
 def run():
-    profiles     = _load_profiles()
+    profiles     = load_profiles()
     profile_names = list(profiles.keys())
     args         = _parse_args(profile_names)
 

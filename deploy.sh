@@ -4,26 +4,72 @@ set -e
 INSTALL_DIR="/etc/systemd/system"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="/boot/firmware/config.txt"
-SCREEN_CONF="$SCRIPT_DIR/screen.conf"
+ENV_FILE="$SCRIPT_DIR/.env"
+LEGACY_SCREEN_CONF="$SCRIPT_DIR/screen.conf"
 
-# Screen the panel boots into unless --screen says otherwise.
-DEFAULT_SCREEN="waveshare144"
-
-usage() {
-  cat <<EOF
-Usage: sudo ./deploy.sh [--screen NAME] [--reboot] [--list]
-
-  --screen NAME   Screen profile to boot into (from profiles.json).
-                  Default: $DEFAULT_SCREEN
-  --reboot        Reboot when done (needed the first time SPI is enabled).
-  --list          List the available screen profiles and exit.
-EOF
-}
+# Screen the panel boots into when this is a fresh install and --screen is not
+# given. An existing .env (or a pre-.env screen.conf) wins over this, so
+# re-running deploy.sh on a device never silently moves it to another display.
+FALLBACK_SCREEN="waveshare144"
 
 # Profile names come from profiles.json so this script never drifts from it.
 profile_names() {
   python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1])).keys()))' \
     "$SCRIPT_DIR/profiles.json"
+}
+
+# PIPANEL_SCREEN as already configured on this device, if anything is.
+current_screen() {
+  if [ -f "$ENV_FILE" ]; then
+    local name
+    name="$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}PIPANEL_SCREEN[[:space:]]*=[[:space:]]*//p' \
+              "$ENV_FILE" | tail -n 1 | tr -d "\"' " )"
+    if [ -n "$name" ]; then echo "$name"; return; fi
+  fi
+  # Pre-.env installs recorded it here; migrate that value forward.
+  if [ -f "$LEGACY_SCREEN_CONF" ]; then
+    tr -d "\"' " < "$LEGACY_SCREEN_CONF" | head -n 1
+  fi
+}
+
+# Set PIPANEL_SCREEN in .env, leaving any other keys (WEATHER_API_KEY, ...) and
+# their order untouched. .env is gitignored, so update.sh's `git reset --hard`
+# cannot wipe the selection.
+write_env_screen() {
+  local screen="$1" tmp
+  tmp="$(mktemp)"
+  if [ -f "$ENV_FILE" ]; then
+    awk -v val="$screen" '
+      /^[[:space:]]*(export[[:space:]]+)?PIPANEL_SCREEN[[:space:]]*=/ {
+        if (!done) { print "PIPANEL_SCREEN=" val; done = 1 }
+        next
+      }
+      { print }
+      END { if (!done) print "PIPANEL_SCREEN=" val }
+    ' "$ENV_FILE" > "$tmp"
+  else
+    printf '# pipanel device config — see .env.example.\nPIPANEL_SCREEN=%s\n' \
+      "$screen" > "$tmp"
+  fi
+  cat "$tmp" > "$ENV_FILE"        # in place: keeps existing owner/permissions
+  rm -f "$tmp"
+  # New file would otherwise be root-only; match the repo so pi can edit it.
+  chown --reference="$SCRIPT_DIR/profiles.json" "$ENV_FILE" 2>/dev/null || true
+}
+
+DEFAULT_SCREEN="$(current_screen)"
+DEFAULT_SCREEN="${DEFAULT_SCREEN:-$FALLBACK_SCREEN}"
+
+usage() {
+  cat <<EOF
+Usage: sudo ./deploy.sh [--screen NAME] [--reboot] [--list]
+
+  --screen NAME   Screen profile to boot into (from profiles.json). Recorded as
+                  PIPANEL_SCREEN in .env, which the panel reads at startup.
+                  Default: $DEFAULT_SCREEN
+  --reboot        Reboot when done (needed the first time SPI is enabled).
+  --list          List the available screen profiles and exit.
+EOF
 }
 
 SCREEN="$DEFAULT_SCREEN"
@@ -51,11 +97,13 @@ if ! profile_names | grep -qxF "$SCREEN"; then
 fi
 echo "Installing pipanel for screen: $SCREEN"
 
-# main.py reads this when no --screen is passed, so the service and a bare
-# `python3 main.py` both come up on the installed screen. It's gitignored, so
-# update.sh's `git reset --hard` can't wipe the selection.
-echo "$SCREEN" > "$SCREEN_CONF"
-echo "Recorded screen in $SCREEN_CONF."
+# main.py (and the apps run standalone) read PIPANEL_SCREEN from .env, so the
+# service and a bare `python3 main.py` both come up on the installed screen.
+write_env_screen "$SCREEN"
+echo "Recorded PIPANEL_SCREEN=$SCREEN in $ENV_FILE."
+if [ -f "$LEGACY_SCREEN_CONF" ]; then
+  echo "Note: $LEGACY_SCREEN_CONF is superseded by .env and can be deleted."
+fi
 
 for SERVICE_FILE in pipanel-update.service pipanel.service; do
   echo "Copying $SERVICE_FILE to $INSTALL_DIR..."

@@ -2,10 +2,13 @@
 .DS_Store
 
 #dev
+# Per-device config: screen selection + API keys (see .env.example, which IS
+# tracked). deploy.sh writes PIPANEL_SCREEN here; ignoring it keeps update.sh's
+# `git reset --hard` from wiping the device's screen.
 .env
 source/
 __pycache__/
 docs/
 
-#install-time screen selection (written by deploy.sh)
+#legacy install-time screen selection, superseded by .env
 screen.conf

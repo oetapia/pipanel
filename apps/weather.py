@@ -1,5 +1,4 @@
 import io
-import json
 import os
 import time
 import threading
@@ -8,26 +7,13 @@ import pygame
 
 if __package__:
     from .display import make_sink
+    from .env import load_env, load_profile
 else:
     from display import make_sink
+    from env import load_env, load_profile
 
 
-# Load .env from project root (one level above this file)
-def _load_env():
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-    try:
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, val = line.split("=", 1)
-                os.environ.setdefault(key.strip(), val.strip().strip("'\""))
-    except FileNotFoundError:
-        pass
-
-
-_load_env()
+load_env()   # WEATHER_API_KEY (and PIPANEL_SCREEN) come from .env
 
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY", "")
 BASE_URL = "http://api.weatherapi.com/v1/current.json"
@@ -217,14 +203,9 @@ class WeatherApp:
 
 
 if __name__ == "__main__":
-    def _load_profile():
-        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(_root, "profiles.json")) as f:
-            profiles = json.load(f)
-        return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
-
+    # Screen comes from PIPANEL_SCREEN in .env, same as main.py.
     try:
-        WeatherApp(_load_profile()).run()
+        WeatherApp(load_profile()[1]).run()
     except KeyboardInterrupt:
         pass
     finally:

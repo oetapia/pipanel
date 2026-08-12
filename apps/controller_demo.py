@@ -11,12 +11,11 @@ indices with no mapping applied — handy for confirming indices on new hardware
 
 Runs two ways:
   * As a pipanel app  -> ControllerDemoApp(P).run()  (renders to the panel)
-  * Standalone        -> python apps/controller_demo.py  (uses 35panel profile)
+  * Standalone        -> python apps/controller_demo.py  (screen from .env)
 
 Press any input to see it.  R toggles raw/mapped.  ESC or Q returns to menu.
 """
 
-import json
 import os
 import time
 
@@ -26,10 +25,12 @@ if __package__:
     from .controller_profile import (
         ControllerProfile, PLAYERS, PLAYER_COLORS, HAT_DIRECTIONS)
     from .display import make_sink
+    from .env import load_profile
 else:
     from controller_profile import (
         ControllerProfile, PLAYERS, PLAYER_COLORS, HAT_DIRECTIONS)
     from display import make_sink
+    from env import load_profile
 
 
 EVENT_HOLD = 1.5  # seconds the latest-event banner stays highlighted
@@ -317,14 +318,9 @@ class ControllerDemoApp:
 
 
 if __name__ == "__main__":
-    def _load_profile():
-        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(_root, "profiles.json")) as f:
-            profiles = json.load(f)
-        return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
-
+    # Screen comes from PIPANEL_SCREEN in .env, same as main.py.
     try:
-        ControllerDemoApp(_load_profile()).run()
+        ControllerDemoApp(load_profile()[1]).run()
     except KeyboardInterrupt:
         pass
     finally:

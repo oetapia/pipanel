@@ -13,10 +13,9 @@ Controller enumeration/mapping comes from apps/controller_profile.py:
 
 Runs two ways:
   * As a pipanel app  -> PongApp(P).run()
-  * Standalone        -> python apps/pong.py  (uses 35panel profile)
+  * Standalone        -> python apps/pong.py  (screen from .env)
 """
 
-import json
 import math
 import os
 import time
@@ -28,9 +27,11 @@ import pygame
 if __package__:
     from .controller_profile import ControllerProfile
     from .display import make_sink
+    from .env import load_profile
 else:
     from controller_profile import ControllerProfile
     from display import make_sink
+    from env import load_profile
 
 BLACK  = (0,   0,   0)
 WHITE  = (255, 255, 255)
@@ -319,14 +320,9 @@ class PongApp:
 
 
 if __name__ == "__main__":
-    def _load_profile():
-        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(_root, "profiles.json")) as f:
-            profiles = json.load(f)
-        return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
-
+    # Screen comes from PIPANEL_SCREEN in .env, same as main.py.
     try:
-        PongApp(_load_profile()).run()
+        PongApp(load_profile()[1]).run()
     except KeyboardInterrupt:
         pass
     finally:

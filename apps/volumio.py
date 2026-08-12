@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import time
@@ -9,8 +8,10 @@ import pygame
 
 if __package__:
     from .display import make_sink
+    from .env import load_profile
 else:
     from display import make_sink
+    from env import load_profile
 
 
 # --- Config ---
@@ -701,15 +702,10 @@ class Display:
 # Main (standalone)
 # ===================================================================
 if __name__ == "__main__":
-    def _load_profile():
-        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(_root, "profiles.json")) as f:
-            profiles = json.load(f)
-        return profiles[os.environ.get("PIPANEL_PROFILE", "35panel")]
-
+    # Screen comes from PIPANEL_SCREEN in .env, same as main.py.
     threading.Thread(target=socket_thread, daemon=True).start()
     try:
-        Display(_load_profile()).run()
+        Display(load_profile()[1]).run()
     except KeyboardInterrupt:
         pass
     finally:
