@@ -8,6 +8,20 @@ Features:
     - Thread-safe sync wrapper for use in existing FSM/terminal code
     - Same API surface as PicarClient for easy migration
 
+Two send paths, and picking the right one matters:
+
+    post_control() / post()   fire-and-forget, returns immediately. For
+                              throttle, steering and lights — idempotent state
+                              where a dropped message is corrected by the next
+                              push. A control loop must use this path.
+    set_motor(), status(),    request/response, blocks for a full round trip.
+    get_sensors(), ...        Only for values you actually need back.
+
+Driving a vehicle from the blocking path stalls the input loop for one RTT per
+command, which starves input sampling and makes the car react to stale sticks.
+Replies are correlated by request id, so a timed-out command can no longer
+leave an orphan reply that every later command reads off by one.
+
 Usage (async):
     import asyncio
     from picar_ws_client import PicarWsClient
@@ -83,10 +97,18 @@ class PicarWsClient:
         self._reconnect_task = None
         self._sensor_callback: Optional[Callable[[dict], None]] = None
         self._receive_task = None
-        self._pending_responses: asyncio.Queue = None
+        # Outstanding request/response calls, keyed by request id so a timeout
+        # can never make a later command read an earlier command's reply.
+        # Insertion-ordered (py3.7+), which the no-id fallback in _resolve uses.
+        self._pending: Dict[int, asyncio.Future] = {}
+        self._next_id = 1
+        # _lock serialises writes to the socket only — replies are correlated by
+        # id, so commands may be in flight concurrently.
         self._lock = asyncio.Lock()
         self.auto_lights = True
         self._last_light_target = ""
+        # Set by _probe_ctl: does the firmware have the combined `ctl` command?
+        self.supports_ctl = False
 
         # Connection stats
         self.reconnect_count = 0
@@ -99,7 +121,7 @@ class PicarWsClient:
     async def connect(self, timeout: float = 5.0) -> bool:
         """Connect to Pico WebSocket server."""
         self._should_run = True
-        self._pending_responses = asyncio.Queue()
+        self._fail_pending("reconnecting")
         try:
             self._ws = await asyncio.wait_for(
                 websockets.connect(self.uri, ping_interval=5, ping_timeout=10),
@@ -111,6 +133,7 @@ class PicarWsClient:
 
             # Start background receiver
             self._receive_task = asyncio.create_task(self._receiver_loop())
+            await self._probe_ctl()
             return True
 
         except (ConnectionRefusedError, OSError, asyncio.TimeoutError) as e:
@@ -125,6 +148,7 @@ class PicarWsClient:
         """Gracefully disconnect."""
         self._should_run = False
         self._connected = False
+        self._fail_pending("disconnected")
 
         if self._reconnect_task:
             self._reconnect_task.cancel()
@@ -144,29 +168,111 @@ class PicarWsClient:
         print("✓ Disconnected")
 
     async def _send_command(self, cmd: dict, timeout: float = 3.0) -> dict:
-        """Send command and wait for response."""
+        """Send a command and wait for its correlated response.
+
+        Use this only for commands whose answer you need (status, sensors).
+        Steering/throttle should go through post_control(), which never blocks
+        the caller — see the module docstring."""
         if not self._connected or not self._ws:
             if self._reconnecting:
                 return {"ok": 0, "e": "reconnecting"}
             return {"ok": 0, "e": "not connected"}
 
-        async with self._lock:
-            t0 = time.time()
-            try:
+        rid = self._next_id
+        self._next_id += 1
+        fut = asyncio.get_running_loop().create_future()
+        self._pending[rid] = fut
+        t0 = time.time()
+        try:
+            async with self._lock:
+                await self._ws.send(json.dumps({**cmd, "i": rid}))
+            response = await asyncio.wait_for(fut, timeout=timeout)
+            self.last_rtt_ms = (time.time() - t0) * 1000
+            return response
+        except asyncio.TimeoutError:
+            return {"ok": 0, "e": "timeout"}
+        except (websockets.ConnectionClosed, OSError) as e:
+            self._connected = False
+            if self._should_run and not self._reconnecting:
+                self._reconnect_task = asyncio.create_task(self._reconnect_loop())
+            return {"ok": 0, "e": f"disconnected: {e}"}
+        finally:
+            # A timed-out request must stop being claimable, or its late reply
+            # would be handed to whichever command asked next.
+            self._pending.pop(rid, None)
+
+    async def post(self, cmd: dict):
+        """Fire-and-forget send — no id, no reply awaited, never blocks.
+
+        For idempotent state pushes (motor/servo/lights) where a dropped
+        message is corrected by the next push a few ms later. Awaiting an ack
+        for these is what stalled the caller's control loop."""
+        if not self._connected or not self._ws:
+            return
+        try:
+            async with self._lock:
                 await self._ws.send(json.dumps(cmd))
-                # Wait for response from receiver loop
-                response = await asyncio.wait_for(
-                    self._pending_responses.get(), timeout=timeout
-                )
-                self.last_rtt_ms = (time.time() - t0) * 1000
-                return response
-            except asyncio.TimeoutError:
-                return {"ok": 0, "e": "timeout"}
-            except (websockets.ConnectionClosed, OSError) as e:
-                self._connected = False
-                if self._should_run:
-                    self._reconnect_task = asyncio.create_task(self._reconnect_loop())
-                return {"ok": 0, "e": f"disconnected: {e}"}
+        except (websockets.ConnectionClosed, OSError):
+            self._connected = False
+            if self._should_run and not self._reconnecting:
+                self._reconnect_task = asyncio.create_task(self._reconnect_loop())
+
+    async def post_control(self, speed: int, angle: int):
+        """Push desired throttle + steering as one best-effort state update.
+
+        "q":1 asks the firmware not to ack. On firmware without the combined
+        `ctl` command we fall back to the two legacy commands, still posted
+        fire-and-forget."""
+        speed = max(-100, min(100, int(speed)))
+        angle = max(0, min(180, int(angle)))
+        if self.supports_ctl:
+            await self.post({"c": "ctl", "m": speed, "s": angle, "q": 1})
+        else:
+            await self.post({"c": "m", "v": speed})
+            await self.post({"c": "s", "v": angle})
+
+    async def _probe_ctl(self):
+        """Learn once whether the firmware understands the combined `ctl`.
+
+        Older firmware answers {"ok":0,"e":"unknown: ctl"} and we degrade to
+        posting the legacy per-actuator commands, so pipanel can be deployed
+        before the Pico is updated. The probe values (stop, centred) are the
+        safe neutral state to be in right after connecting."""
+        reply = await self._send_command({"c": "ctl", "m": 0, "s": 90},
+                                         timeout=2.0)
+        self.supports_ctl = bool(reply.get("ok"))
+        if not self.supports_ctl:
+            print("ℹ️  Firmware has no `ctl` command — using legacy m/s posts")
+
+    def _resolve(self, data: dict):
+        """Hand a reply to the request that asked for it."""
+        rid = data.get("i")
+        if rid is not None:
+            # An id we no longer hold is a late reply to a timed-out request.
+            fut = self._pending.pop(rid, None)
+        else:
+            # Firmware that doesn't echo the id: the Pico answers strictly in
+            # order, so the oldest outstanding request owns this reply. With
+            # nothing outstanding it's an unsolicited ack (e.g. for a posted
+            # control frame) and gets dropped — buffering it would desync
+            # every later command.
+            fut = self._pop_oldest()
+        if fut is not None and not fut.done():
+            fut.set_result(data)
+
+    def _pop_oldest(self) -> Optional[asyncio.Future]:
+        for rid in list(self._pending):
+            fut = self._pending.pop(rid)
+            if not fut.done():
+                return fut
+        return None
+
+    def _fail_pending(self, reason: str):
+        """Resolve every outstanding request so no caller waits out its timeout."""
+        while self._pending:
+            _, fut = self._pending.popitem()
+            if not fut.done():
+                fut.set_result({"ok": 0, "e": reason})
 
     async def _receiver_loop(self):
         """Background task: receive messages and dispatch."""
@@ -182,14 +288,14 @@ class PicarWsClient:
                     if self._sensor_callback:
                         self._sensor_callback(data)
                 else:
-                    # Command response
-                    await self._pending_responses.put(data)
+                    self._resolve(data)
 
         except (websockets.ConnectionClosed, OSError) as e:
             print(f"⚠️  Connection lost: {e}")
         finally:
             self._connected = False
-            if self._should_run:
+            self._fail_pending("disconnected")
+            if self._should_run and not self._reconnecting:
                 self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def _reconnect_loop(self):
@@ -216,9 +322,10 @@ class PicarWsClient:
                 self._connected = True
                 self._reconnecting = False
                 self.reconnect_count += 1
-                self._pending_responses = asyncio.Queue()
+                self._fail_pending("reconnected")
                 self._receive_task = asyncio.create_task(self._receiver_loop())
                 print(f"✓ Reconnected (attempt #{self.reconnect_count})")
+                await self._probe_ctl()
                 return
 
             except (ConnectionRefusedError, OSError, asyncio.TimeoutError):
@@ -243,7 +350,9 @@ class PicarWsClient:
                 target = "off"
             if target != self._last_light_target:
                 self._last_light_target = target
-                asyncio.create_task(self._send_command({"c": "l", "v": target}))
+                # Posted, not sent: nobody reads this reply, and queueing an
+                # unclaimed one used to desync the response stream.
+                asyncio.create_task(self.post({"c": "l", "v": target}))
 
         return result
 
@@ -467,6 +576,33 @@ class PicarWsClientSync:
             return future.result(timeout=timeout)
         except Exception as e:
             return {"ok": 0, "e": str(e)}
+
+    @property
+    def supports_ctl(self) -> bool:
+        return self._async_client.supports_ctl
+
+    # ========== Control (non-blocking) ==========
+    def post(self, cmd: dict):
+        """Schedule any command fire-and-forget; returns immediately."""
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self._async_client.post(cmd), self._loop)
+
+    def post_control(self, speed: int, angle: int):
+        """Schedule a throttle+steering state push and return immediately.
+
+        Deliberately does NOT wait on the future: the caller is a control loop
+        whose job is to keep sampling input, and the value is superseded by the
+        next push anyway. Use this instead of set_motor/set_servo when driving."""
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self._async_client.post_control(speed, angle), self._loop)
+
+    def post_lights(self, status: str):
+        """Fire-and-forget lights change (no reply awaited)."""
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self._async_client.post({"c": "l", "v": status}), self._loop)
 
     # ========== Motor ==========
     def set_motor(self, speed: int) -> dict:
